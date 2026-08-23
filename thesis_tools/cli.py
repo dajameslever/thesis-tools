@@ -162,7 +162,15 @@ def _interactive_topic_finder_inputs(project: ProjectState) -> TopicFinderInputs
     if use_llm:
         use_llm = _ensure_anthropic_key_interactive()
 
-    sub_questions = list(project.sub_questions)
+    sub_questions = None
+    if project.sub_questions:
+        print("Sub-questions saved from a previous run:")
+        for i, q in enumerate(project.sub_questions, start=1):
+            print(f"  {i}. {q}")
+        print()
+        if _prompt("Keep these sub-questions? (Y/n)", default="y").lower().startswith("y"):
+            sub_questions = list(project.sub_questions)
+
     if not sub_questions:
         sub_questions_raw = _prompt(
             "Break this into 3-4 sub-questions yourself? (semicolon-separated, optional — "

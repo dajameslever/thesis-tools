@@ -117,12 +117,16 @@ skips straight to searching using saved/given values instead.
 If you leave sub-questions blank and Claude is enabled, it suggests 3-4 for
 your topic, prints them, and asks you to confirm before anything else
 happens — no search or per-paper analysis runs against an unconfirmed batch.
-You can accept them as-is, or decline and type your own instead. Running
-non-interactively (`--field`/`--title` given directly, no human to confirm
-with) still shows whatever Claude generated in the console output, so you
-can see — and re-run with `--sub-questions` to override — what was used.
-Either way, the sub-questions actually used are saved back into the shared
-project file, so `index-library`/`literature-review` reuse the same ones.
+You can accept them as-is, or decline and type your own instead. If a
+project file already has sub-questions saved from a previous run, they're
+still printed and re-confirmed (`Keep these sub-questions? (Y/n)`) rather
+than reused silently — decline to type new ones or have Claude regenerate.
+Running non-interactively (`--field`/`--title` given directly, no human to
+confirm with) still shows whatever Claude generated in the console output,
+so you can see — and re-run with `--sub-questions` to override — what was
+used. Either way, the sub-questions actually used are saved back into the
+shared project file, so `index-library`/`literature-review` reuse the same
+ones.
 
 Also available, opt-in: `--download-papers` (or the matching interactive
 prompt) downloads each shortlisted paper's PDF where — and only where — a

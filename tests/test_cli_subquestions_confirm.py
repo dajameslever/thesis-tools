@@ -127,3 +127,70 @@ def test_bare_topic_finder_goes_interactive_even_with_saved_project_state(tmp_pa
     # The old bug took the flags/non-interactive shortcut whenever project
     # state already had field+working_title, calling input() zero times.
     assert mock_input.call_count == len(answers)
+
+
+def test_interactive_topic_finder_reconfirms_saved_subquestions(monkeypatch, tmp_path, capsys):
+    """A project file already carrying sub-questions from a previous run must
+    still show them and ask before reusing them silently — otherwise a batch
+    that was never actually reviewed keeps getting reused forever."""
+    from thesis_tools.cli import _interactive_topic_finder_inputs
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
+    project = ProjectState(
+        field="Psychology",
+        working_title="My Working Title",
+        style="apa",
+        sub_questions=["Saved Q1?", "Saved Q2?"],
+    )
+
+    answers = iter([
+        "",  # field -> keep saved
+        "",  # working_title -> keep saved
+        "",  # research_question
+        "",  # extra_keywords
+        "",  # style -> keep saved
+        "n",  # use_llm
+        "y",  # keep saved sub-questions
+        "n",  # download_papers
+    ])
+
+    with patch("builtins.input", lambda *_: next(answers)):
+        inputs = _interactive_topic_finder_inputs(project)
+
+    assert inputs.sub_questions == ["Saved Q1?", "Saved Q2?"]
+    out = capsys.readouterr().out
+    assert "Sub-questions saved from a previous run:" in out
+    assert "1. Saved Q1?" in out
+
+
+def test_interactive_topic_finder_lets_user_decline_saved_subquestions(monkeypatch, tmp_path):
+    from thesis_tools.cli import _interactive_topic_finder_inputs
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
+    project = ProjectState(
+        field="Psychology",
+        working_title="My Working Title",
+        style="apa",
+        sub_questions=["Stale Q1?", "Stale Q2?"],
+    )
+
+    answers = iter([
+        "",  # field
+        "",  # working_title
+        "",  # research_question
+        "",  # extra_keywords
+        "",  # style
+        "n",  # use_llm
+        "n",  # decline saved sub-questions
+        "Fresh Q1?; Fresh Q2?",  # type new ones instead
+        "n",  # download_papers
+    ])
+
+    with patch("builtins.input", lambda *_: next(answers)):
+        inputs = _interactive_topic_finder_inputs(project)
+
+    assert inputs.sub_questions == ["Fresh Q1?", "Fresh Q2?"]
