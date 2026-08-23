@@ -31,12 +31,13 @@ from .sources.base import Paper
 from .subquestions import SubquestionAnalysis, analyze_subquestions
 
 DISCLAIMER = (
-    "> ⚠️ **This is an AI-assisted DRAFT.** Claims are grounded in paper abstracts, plus real "
-    "extracted text (and, where available, real page numbers) for anything indexed by Part 2 — "
-    "but any direct quotation should still be checked against the actual PDF: automated text "
-    "extraction can introduce artifacts (broken hyphenation, dropped characters, OCR noise). "
-    "Verify every claim and quote before relying on it, and rewrite this in your own voice. "
-    "Treat it as a structured starting point, not a citable final draft."
+    "> ⚠️ **This is an AI-assisted DRAFT.** Claims about papers Part 2 indexed locally draw on "
+    "the real extracted document text (with page numbers where known) — claims about papers "
+    "found only via Part 1's search APIs draw on the abstract only, since that's all those "
+    "sources ever provide. Either way: automated text extraction can introduce artifacts (broken "
+    "hyphenation, dropped characters, OCR noise), so check any direct quotation against the "
+    "actual PDF before using it. Verify every claim, rewrite this in your own voice, and treat it "
+    "as a structured starting point, not a citable final draft."
 )
 
 

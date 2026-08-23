@@ -50,6 +50,20 @@ def _project_has_answers(project: ProjectState) -> bool:
     return bool(project.research_question or project.sub_questions)
 
 
+def _print_project_state(project: ProjectState, path: str) -> None:
+    print(f"Project file: {path}")
+    print(f"  Field: {project.field or '(not set)'}")
+    print(f"  Working title: {project.working_title or '(not set)'}")
+    print(f"  Research question: {project.research_question or '(not set)'}")
+    print(f"  Sub-questions: {'; '.join(project.sub_questions) if project.sub_questions else '(not set)'}")
+    print(f"  Citation style: {(project.style or 'apa').upper()}" + (" (default)" if not project.style else ""))
+    print(f"  Contact email: {project.contact_email or '(not set)'}")
+    print(f"  Use Claude by default: {'yes' if project.use_llm else 'no'}")
+    print(f"  Claude model: {project.llm_model or '(not set — each part picks its own default)'}")
+    print(f"  Last topic-finder cache: {project.last_topic_cache or '(none yet)'}")
+    print(f"  Last library index: {project.last_library_index or '(none yet)'}")
+
+
 def _default_use_llm(project: ProjectState) -> bool:
     """Default the 'use Claude' prompt to yes whenever it's actually usable
     (an API key is present) or a prior run already opted in — Claude
@@ -279,6 +293,24 @@ def _build_parser() -> argparse.ArgumentParser:
     lr.add_argument("--project-file", default=DEFAULT_PROJECT_PATH, help=f"Where shared project state lives (default: {DEFAULT_PROJECT_PATH})")
     lr.add_argument("--non-interactive", action="store_true", help="Don't prompt for missing values; fail instead if --field/--title (and sub-questions) can't be resolved")
 
+    cfg = subparsers.add_parser(
+        "configure",
+        help="Set (and remember) your field, title, research question, sub-questions, and citation style once — before running anything else",
+    )
+    cfg.add_argument("--field", help="Your field/discipline")
+    cfg.add_argument("--title", dest="working_title", help="Working thesis title")
+    cfg.add_argument("--question", dest="research_question", help="Core research question")
+    cfg.add_argument("--sub-questions", help="Semicolon-separated sub-questions")
+    cfg.add_argument("--style", choices=STYLES, help="Citation style — set this once here and every part reuses it")
+    cfg.add_argument("--contact-email", help="Optional email sent to OpenAlex/Crossref's 'polite pool'")
+    cfg.add_argument("--llm-model", help="Claude model to use where a part doesn't have its own better default")
+    llm_toggle = cfg.add_mutually_exclusive_group()
+    llm_toggle.add_argument("--llm-summaries", dest="llm_summaries", action="store_true", help="Use Claude by default across all parts")
+    llm_toggle.add_argument("--no-llm-summaries", dest="no_llm_summaries", action="store_true", help="Don't use Claude by default across all parts")
+    cfg.add_argument("--show", action="store_true", help="Print the current saved settings and exit, without changing anything")
+    cfg.add_argument("--project-file", default=DEFAULT_PROJECT_PATH, help=f"Where shared project state lives (default: {DEFAULT_PROJECT_PATH})")
+    cfg.add_argument("--non-interactive", action="store_true", help="Only apply the flags given; don't prompt for the rest")
+
     return parser
 
 
@@ -288,11 +320,13 @@ def _run_topic_finder_command(args: argparse.Namespace) -> int:
     # part's own sensible default. Deliberately NOT persisted unless the user
     # actually passes --llm-model — see the project.updated() call below.
     llm_model = args.llm_model or project.llm_model or "claude-sonnet-5"
+    field = args.field or project.field
+    working_title = args.working_title or project.working_title
 
-    if args.field and args.working_title:
+    if field and working_title:
         inputs = TopicFinderInputs(
-            field=args.field,
-            working_title=args.working_title,
+            field=field,
+            working_title=working_title,
             research_question=args.research_question or project.research_question,
             extra_keywords=args.extra_keywords,
             style=args.style or project.style or "apa",
@@ -309,7 +343,11 @@ def _run_topic_finder_command(args: argparse.Namespace) -> int:
             reanalyze_from=args.reanalyze_from,
         )
     elif args.non_interactive:
-        print("error: --non-interactive requires --field and --title", file=sys.stderr)
+        print(
+            "error: --non-interactive requires --field and --title (or run `thesis-tools configure` "
+            "first to save them)",
+            file=sys.stderr,
+        )
         return 2
     else:
         inputs = _interactive_topic_finder_inputs(project)
@@ -508,6 +546,68 @@ def _run_literature_review_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_configure_command(args: argparse.Namespace) -> int:
+    project = ProjectState.load(args.project_file)
+
+    if args.show:
+        _print_project_state(project, args.project_file)
+        return 0
+
+    # Tri-state: True/False if the user explicitly chose one, None (don't
+    # touch the saved value) if neither flag was given.
+    use_llm_choice = True if args.llm_summaries else (False if args.no_llm_summaries else None)
+
+    if args.non_interactive:
+        project = project.updated(
+            field=args.field,
+            working_title=args.working_title,
+            research_question=args.research_question,
+            sub_questions=_split_semicolons(args.sub_questions),
+            style=args.style,
+            contact_email=args.contact_email,
+            llm_model=args.llm_model,
+            use_llm=use_llm_choice,
+        )
+    else:
+        print("=== Configure your thesis-tools project ===")
+        print("Set these once — topic-finder, index-library, and literature-review will all")
+        print("reuse them automatically from here on. Press Enter to keep the current value.\n")
+
+        field = _prompt("Field/discipline", default=args.field or project.field or "")
+        working_title = _prompt("Working thesis title", default=args.working_title or project.working_title or "")
+        research_question = _prompt("Research question (optional)", default=args.research_question or project.research_question or "")
+        sub_questions_default = args.sub_questions or ("; ".join(project.sub_questions) if project.sub_questions else "")
+        sub_questions_raw = _prompt("Sub-questions, semicolon-separated (optional)", default=sub_questions_default)
+        style = _prompt_style(default=args.style or project.style or "apa")
+        contact_email = _prompt(
+            "Contact email for OpenAlex/Crossref's 'polite pool' (optional)",
+            default=args.contact_email or project.contact_email or "",
+        )
+        if use_llm_choice is None:
+            default_use_llm = _default_use_llm(project)
+            use_llm_choice = _prompt(
+                "Use Claude by default for summaries/sub-questions/stance analysis? "
+                + ("(Y/n)" if default_use_llm else "(y/N)"),
+                default="y" if default_use_llm else "n",
+            ).lower().startswith("y")
+
+        project = project.updated(
+            field=field or None,
+            working_title=working_title or None,
+            research_question=research_question or None,
+            sub_questions=_split_semicolons(sub_questions_raw),
+            style=style,
+            contact_email=contact_email or None,
+            use_llm=use_llm_choice,
+            llm_model=args.llm_model or project.llm_model,
+        )
+
+    project.save(args.project_file)
+    print("\nSaved. Current settings:\n")
+    _print_project_state(project, args.project_file)
+    return 0
+
+
 def main(argv=None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
@@ -518,6 +618,8 @@ def main(argv=None) -> int:
         return _run_index_library_command(args)
     if args.command == "literature-review":
         return _run_literature_review_command(args)
+    if args.command == "configure":
+        return _run_configure_command(args)
 
     parser.print_help()
     return 1

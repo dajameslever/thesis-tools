@@ -18,6 +18,23 @@ them automatically and only asks for whatever's still missing.** Pass
 override what's saved, or point `--project-file` elsewhere to run more than
 one thesis project side by side.
 
+### Setting things up before running anything else
+
+You don't have to wait until Part 1 asks — `thesis-tools configure` sets
+(and remembers) your field, title, research question, sub-questions, and
+**citation style** directly, with no search involved:
+
+```bash
+python -m thesis_tools configure --style ieee --field "clinical psychology"
+```
+
+Run it with no flags for an interactive prompt (pre-filled with whatever's
+already saved — press Enter to keep a value), `--show` to print the current
+settings without changing anything, and `--no-llm-summaries` / `--llm-summaries`
+to set your Claude preference explicitly. Every later `topic-finder`,
+`index-library`, or `literature-review` run picks these up automatically —
+including with `--non-interactive`, once field/title are set this way.
+
 ### What it searches, and why not ScienceDirect / Google Scholar
 
 Neither ScienceDirect nor Google Scholar offers a way for a tool like this to
@@ -243,10 +260,11 @@ Run `python -m thesis_tools literature-review --help` for all options.
 ### Citation styles
 
 APA 7, MLA 9, Chicago (author-date), Harvard, and IEEE are supported
-(`--style`) in all three parts. These are **best-effort formatters** built
-from whatever metadata the free APIs return — always sanity-check the
-generated bibliography against your university's exact style requirements
-before submitting.
+(`--style`) in all three parts. Set it once with `thesis-tools configure
+--style ...` and every part reuses it from then on. These are **best-effort
+formatters** built from whatever metadata the free APIs return — always
+sanity-check the generated bibliography against your university's exact
+style requirements before submitting.
 
 ## Project layout
 
@@ -275,7 +293,7 @@ thesis_tools/
     organizer.py         Optional copy-only file organizer
     report.py            Renders Part 2's Markdown report
     library_indexer.py   Orchestrates Part 2
-  cli.py              `topic-finder` / `index-library` / `literature-review` commands
+  cli.py              `topic-finder` / `index-library` / `literature-review` / `configure` commands
 tests/                Unit tests (network calls are mocked; PDF/docx tests use real files)
 ```
 
