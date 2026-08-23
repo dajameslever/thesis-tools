@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "thesis-tools"
+version = "0.1.0"
+description = "A local toolkit for working through a thesis, starting with topic/title selection and novelty checking."
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "requests>=2.28",
+]
+
+[project.optional-dependencies]
+llm = ["anthropic>=0.30"]
+dev = ["pytest>=7.0"]
+
+[project.scripts]
+thesis-tools = "thesis_tools.cli:main"
+
+[tool.setuptools]
+packages = ["thesis_tools", "thesis_tools.sources"]
