@@ -44,7 +44,9 @@ def build_coverage(entries: List[LibraryEntry]) -> dict:
             key = doi or (ref.get("title") or "").strip().lower()
             if not key:
                 continue
-            gap = gaps.setdefault(key, {"title": ref.get("title"), "year": ref.get("year"), "cited_by": []})
+            gap = gaps.setdefault(
+                key, {"title": ref.get("title"), "year": ref.get("year"), "doi": ref.get("doi"), "cited_by": []}
+            )
             gap["cited_by"].append(entry.paper.title)
 
     frequently_missing = sorted(

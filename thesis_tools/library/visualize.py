@@ -16,6 +16,7 @@ import datetime as _dt
 import html as _html
 from typing import Dict, List, Optional, Tuple
 
+from ..links import doi_url, google_scholar_search_url, sciencedirect_search_url
 from ..recency import DEFAULT_OLD_THRESHOLD_YEARS, age_years, newest_year
 from .citation_graph import build_coverage
 from .index_store import LibraryEntry, LibraryIndex
@@ -128,6 +129,7 @@ def _compute_weaknesses(stats: dict) -> List[dict]:
                 "title": f"{len(unresolved)} file(s) unresolved — no verified metadata",
                 "detail": "Title/author/year came from the file alone (no confident DOI or title match). Double-check before citing.",
                 "items": [e.paper.title for e in unresolved],
+                "item_links": [_find_it_links_html(e.paper.title) for e in unresolved],
             }
         )
 
@@ -179,13 +181,15 @@ def _compute_weaknesses(stats: dict) -> List[dict]:
     elif coverage["total_references"] > 0:
         share_missing = coverage["missing_references"] / coverage["total_references"]
         if share_missing >= MISSING_REFERENCES_WARN_THRESHOLD:
+            top_gaps = coverage["frequently_missing"][:5]
             weaknesses.append(
                 {
                     "level": "warning",
                     "title": f"{coverage['missing_references']} of {coverage['total_references']} cited references "
                     f"({share_missing:.0%}) aren't in your library",
                     "detail": "See 'Frequently missing' below for the recurring gaps worth tracking down first.",
-                    "items": [g["title"] for g in coverage["frequently_missing"][:5]],
+                    "items": [g["title"] for g in top_gaps],
+                    "item_links": [_find_it_links_html(g["title"], g.get("doi")) for g in top_gaps],
                 }
             )
 
@@ -205,6 +209,19 @@ def _compute_weaknesses(stats: dict) -> List[dict]:
 
 def _esc(text: object) -> str:
     return _html.escape(str(text if text is not None else ""))
+
+
+def _find_it_links_html(title: str, doi: Optional[str] = None) -> str:
+    """A DOI link when we actually have one (most likely to land straight on
+    the canonical record), plus Google Scholar / ScienceDirect deep-search
+    links as a fallback — neither is an API call, just a pre-filled search
+    URL, same pattern used for "Needs manual review" in the Markdown report."""
+    links = []
+    if doi:
+        links.append(f'<a href="{_esc(doi_url(doi))}" target="_blank" rel="noopener">DOI</a>')
+    links.append(f'<a href="{_esc(google_scholar_search_url(title))}" target="_blank" rel="noopener">Google Scholar</a>')
+    links.append(f'<a href="{_esc(sciencedirect_search_url(title))}" target="_blank" rel="noopener">ScienceDirect</a>')
+    return " · ".join(links)
 
 
 def _bar_chart_svg(
@@ -297,10 +314,14 @@ def _weakness_card(weakness: dict) -> str:
     items_html = ""
     if weakness["items"]:
         shown = weakness["items"][:8]
+        item_links = weakness.get("item_links") or []
         rest = len(weakness["items"]) - len(shown)
-        li = "".join(f"<li>{_esc(item)}</li>" for item in shown)
+        li_parts = []
+        for i, item in enumerate(shown):
+            link_html = f" — {item_links[i]}" if i < len(item_links) else ""
+            li_parts.append(f"<li>{_esc(item)}{link_html}</li>")
         more = f'<li class="viz-muted">…and {rest} more</li>' if rest > 0 else ""
-        items_html = f'<ul class="viz-weakness-items">{li}{more}</ul>'
+        items_html = f'<ul class="viz-weakness-items">{"".join(li_parts)}{more}</ul>'
     return (
         f'<div class="viz-weakness" style="border-left-color:{color}">'
         f'<div class="viz-weakness-title"><span aria-hidden="true">{icon}</span> {_esc(weakness["title"])}</div>'
@@ -366,6 +387,11 @@ _CSS = """
 table.viz-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; margin-top: 8px; }
 table.viz-table th, table.viz-table td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--viz-border); }
 table.viz-table th { color: var(--viz-text-secondary); font-weight: 600; }
+.viz-root a { color: #2a78d6; text-decoration: none; }
+.viz-root a:hover { text-decoration: underline; }
+.viz-root a:visited { opacity: 0.85; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .viz-root a { color: #3987e5; } }
+:root[data-theme="dark"] .viz-root a { color: #3987e5; }
 """
 
 
@@ -460,13 +486,14 @@ def _frequently_missing_table(frequently_missing: List[dict]) -> str:
         return ""
     rows = "".join(
         f"<tr><td>{_esc(g['title'])}</td><td>{_esc(g['year'] or '–')}</td>"
-        f"<td>{len(g['cited_by'])}</td></tr>"
+        f"<td>{len(g['cited_by'])}</td><td>{_find_it_links_html(g['title'], g.get('doi'))}</td></tr>"
         for g in frequently_missing
     )
     return f"""
-    <p><strong>Frequently missing</strong> — cited by 2+ of your papers but not yet in your library:</p>
+    <p><strong>Frequently missing</strong> — cited by 2+ of your papers but not yet in your library. A direct
+    DOI link is shown where one is known; otherwise use the search links to track it down:</p>
     <table class="viz-table">
-      <thead><tr><th>Title</th><th>Year</th><th>Cited by</th></tr></thead>
+      <thead><tr><th>Title</th><th>Year</th><th>Cited by</th><th>Find it</th></tr></thead>
       <tbody>{rows}</tbody>
     </table>
     """

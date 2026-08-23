@@ -150,3 +150,49 @@ def test_build_visualization_html_end_to_end():
     html = build_visualization_html(index)
     assert "<!doctype html>" in html
     assert "Library Visualization" in html
+
+
+def test_frequently_missing_table_links_by_doi_when_known():
+    index = LibraryIndex(
+        [
+            _entry(
+                "a.pdf",
+                doi="10.1/a",
+                references=[
+                    {"doi": "10.1/missing", "title": "Missing With DOI", "year": 2001},
+                ],
+            ),
+            _entry(
+                "b.pdf",
+                doi="10.1/b",
+                references=[
+                    {"doi": "10.1/missing", "title": "Missing With DOI", "year": 2001},
+                ],
+            ),
+        ]
+    )
+    stats = compute_stats(index)
+    html = render_html(stats)
+    assert 'href="https://doi.org/10.1/missing"' in html
+    assert "scholar.google.com" in html
+    assert "sciencedirect.com" in html
+
+
+def test_frequently_missing_table_falls_back_to_search_links_without_doi():
+    index = LibraryIndex(
+        [
+            _entry("a.pdf", doi="10.1/a", references=[{"doi": None, "title": "No DOI Known", "year": 2001}]),
+            _entry("b.pdf", doi="10.1/b", references=[{"doi": None, "title": "No DOI Known", "year": 2001}]),
+        ]
+    )
+    html = render_html(compute_stats(index))
+    assert "doi.org" not in html
+    assert "scholar.google.com" in html
+    assert "sciencedirect.com" in html
+
+
+def test_unresolved_weakness_includes_search_links():
+    index = LibraryIndex([_entry("a.pdf", confidence="unresolved", title="Some Unresolved Paper")])
+    html = render_html(compute_stats(index))
+    assert "scholar.google.com" in html
+    assert "sciencedirect.com" in html
