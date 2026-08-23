@@ -114,13 +114,26 @@ field/title/style to the project file, so a fresh run through the checklist
 first. Passing `--field` and `--title` directly, or `--non-interactive`,
 skips straight to searching using saved/given values instead.
 
-If you leave sub-questions blank and Claude is enabled, it suggests 3-4 for
-your topic, prints them, and asks you to confirm before anything else
-happens — no search or per-paper analysis runs against an unconfirmed batch.
-You can accept them as-is, or decline and type your own instead. If a
-project file already has sub-questions saved from a previous run, they're
-still printed and re-confirmed (`Keep these sub-questions? (Y/n)`) rather
-than reused silently — decline to type new ones or have Claude regenerate.
+Sub-questions are always confirmed, never just assumed, whatever state
+they're in when the prompt starts:
+
+- **Blank, Claude enabled:** it suggests 3-4 for your topic, prints them,
+  and asks you to confirm before anything else happens — no search or
+  per-paper analysis runs against an unconfirmed batch. Accept as-is, or
+  decline and type your own instead.
+- **Already saved from a previous run:** they're printed again rather than
+  reused silently. With Claude enabled you get a real choice — `Keep
+  these, or have Claude suggest fresh ones for this run? (keep/suggest)` —
+  so opting into Claude actually gets you fresh recommendations rather than
+  the old batch by default. Without Claude, it's a plain `Keep these
+  sub-questions? (Y/n)`; declining lets you type new ones.
+- **Still blank after all of that** (Claude off and you skipped past the
+  "type your own" prompt too): it says so explicitly — `No sub-questions
+  set — the report won't include stance/compare-and-contrast analysis` —
+  and asks `Continue without sub-questions? (y/N)` before proceeding,
+  giving one more chance to enter some rather than silently running with
+  zero.
+
 Running non-interactively (`--field`/`--title` given directly, no human to
 confirm with) still shows whatever Claude generated in the console output,
 so you can see — and re-run with `--sub-questions` to override — what was

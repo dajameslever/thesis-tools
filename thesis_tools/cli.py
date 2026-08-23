@@ -168,7 +168,19 @@ def _interactive_topic_finder_inputs(project: ProjectState) -> TopicFinderInputs
         for i, q in enumerate(project.sub_questions, start=1):
             print(f"  {i}. {q}")
         print()
-        if _prompt("Keep these sub-questions? (Y/n)", default="y").lower().startswith("y"):
+        if use_llm:
+            # Don't bury "get fresh Claude recommendations" behind declining
+            # a keep/reuse default — someone who just opted into Claude
+            # expects that choice to be on offer here, not implied by "no".
+            choice = _prompt(
+                "Keep these, or have Claude suggest fresh ones for this run? (keep/suggest)",
+                default="keep",
+            ).strip().lower()
+            if choice.startswith("s"):
+                sub_questions = _generate_and_confirm_subquestions(working_title, research_question, project)
+            else:
+                sub_questions = list(project.sub_questions)
+        elif _prompt("Keep these sub-questions? (Y/n)", default="y").lower().startswith("y"):
             sub_questions = list(project.sub_questions)
 
     if not sub_questions:
@@ -179,6 +191,16 @@ def _interactive_topic_finder_inputs(project: ProjectState) -> TopicFinderInputs
         sub_questions = _split_semicolons(sub_questions_raw)
         if not sub_questions and use_llm:
             sub_questions = _generate_and_confirm_subquestions(working_title, research_question, project)
+
+    # Blank is a real, deliberate choice too — don't let it happen by
+    # default just because every prompt above was skipped past. Confirm it
+    # explicitly, and give one more chance to enter some, before proceeding
+    # with a report that has no per-sub-question stance analysis at all.
+    if not sub_questions:
+        print("No sub-questions set — the report won't include stance/compare-and-contrast analysis.\n")
+        if not _prompt("Continue without sub-questions? (y/N)", default="n").lower().startswith("y"):
+            raw = _prompt("Sub-questions (semicolon-separated, 3-4 recommended)")
+            sub_questions = _split_semicolons(raw)
 
     download_papers = _prompt(
         "Also download each shortlisted paper's open-access PDF (where one exists) and extract its "

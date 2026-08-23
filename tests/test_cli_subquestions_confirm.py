@@ -113,6 +113,7 @@ def test_bare_topic_finder_goes_interactive_even_with_saved_project_state(tmp_pa
         "",  # style -> keep saved default
         "n",  # use_llm
         "",  # sub_questions_raw
+        "y",  # continue without sub-questions
         "n",  # download_papers
     ]
 
@@ -194,3 +195,124 @@ def test_interactive_topic_finder_lets_user_decline_saved_subquestions(monkeypat
         inputs = _interactive_topic_finder_inputs(project)
 
     assert inputs.sub_questions == ["Fresh Q1?", "Fresh Q2?"]
+
+
+def test_interactive_topic_finder_offers_fresh_claude_suggestions_over_saved(monkeypatch, tmp_path):
+    """With Claude enabled and sub-questions already saved, the user must be
+    offered a real choice between keeping them and asking Claude for fresh
+    ones — not just an implicit "no" to a keep/reuse default."""
+    from thesis_tools.cli import _interactive_topic_finder_inputs
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+
+    project = ProjectState(
+        field="Psychology",
+        working_title="My Working Title",
+        style="apa",
+        sub_questions=["Old Q1?", "Old Q2?"],
+    )
+
+    answers = iter([
+        "",  # field
+        "",  # working_title
+        "",  # research_question
+        "",  # extra_keywords
+        "",  # style
+        "y",  # use_llm
+        "suggest",  # keep-or-suggest choice
+        "y",  # confirm Claude's fresh suggestions
+        "n",  # download_papers
+    ])
+
+    with patch("builtins.input", lambda *_: next(answers)), \
+         patch("thesis_tools.cli.generate_subquestions", return_value=["Fresh Q1?", "Fresh Q2?"]):
+        inputs = _interactive_topic_finder_inputs(project)
+
+    assert inputs.sub_questions == ["Fresh Q1?", "Fresh Q2?"]
+
+
+def test_interactive_topic_finder_keeps_saved_when_claude_enabled_and_user_says_keep(monkeypatch, tmp_path):
+    from thesis_tools.cli import _interactive_topic_finder_inputs
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+
+    project = ProjectState(
+        field="Psychology",
+        working_title="My Working Title",
+        style="apa",
+        sub_questions=["Old Q1?", "Old Q2?"],
+    )
+
+    answers = iter([
+        "",  # field
+        "",  # working_title
+        "",  # research_question
+        "",  # extra_keywords
+        "",  # style
+        "y",  # use_llm
+        "keep",  # keep-or-suggest choice
+        "n",  # download_papers
+    ])
+
+    with patch("builtins.input", lambda *_: next(answers)), \
+         patch("thesis_tools.cli.generate_subquestions") as mock_gen:
+        inputs = _interactive_topic_finder_inputs(project)
+
+    assert inputs.sub_questions == ["Old Q1?", "Old Q2?"]
+    mock_gen.assert_not_called()
+
+
+def test_interactive_topic_finder_confirms_before_proceeding_with_no_subquestions(monkeypatch, tmp_path, capsys):
+    """Ending up with zero sub-questions must be an explicit, confirmed
+    choice — not something that just happens because every prompt above
+    was skipped past."""
+    from thesis_tools.cli import _interactive_topic_finder_inputs
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
+    answers = iter([
+        "Psychology",  # field
+        "My Working Title",  # working_title
+        "",  # research_question
+        "",  # extra_keywords
+        "apa",  # style
+        "n",  # use_llm
+        "",  # sub_questions_raw -> blank
+        "y",  # continue without sub-questions
+        "n",  # download_papers
+    ])
+
+    with patch("builtins.input", lambda *_: next(answers)):
+        inputs = _interactive_topic_finder_inputs(ProjectState())
+
+    assert inputs.sub_questions is None
+    out = capsys.readouterr().out
+    assert "No sub-questions set" in out
+
+
+def test_interactive_topic_finder_declining_blank_reprompts_for_subquestions(monkeypatch, tmp_path):
+    from thesis_tools.cli import _interactive_topic_finder_inputs
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
+    answers = iter([
+        "Psychology",  # field
+        "My Working Title",  # working_title
+        "",  # research_question
+        "",  # extra_keywords
+        "apa",  # style
+        "n",  # use_llm
+        "",  # sub_questions_raw -> blank
+        "n",  # decline to continue without sub-questions
+        "Second Chance Q1?; Second Chance Q2?",  # given a real chance to enter some
+        "n",  # download_papers
+    ])
+
+    with patch("builtins.input", lambda *_: next(answers)):
+        inputs = _interactive_topic_finder_inputs(ProjectState())
+
+    assert inputs.sub_questions == ["Second Chance Q1?", "Second Chance Q2?"]
