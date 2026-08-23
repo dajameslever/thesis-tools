@@ -150,3 +150,61 @@ def test_run_topic_finder_prints_one_llm_notice_not_one_per_paper(mock_ss, mock_
     stderr = capsys.readouterr().err
     assert stderr.count("ANTHROPIC_API_KEY not set") == 1
     assert "Claude requested but unavailable" in stderr
+
+
+@patch("thesis_tools.topic_finder.generate_subquestions")
+@patch("thesis_tools.sources.crossref.CrossrefClient.search")
+@patch("thesis_tools.sources.arxiv.ArxivClient.search")
+@patch("thesis_tools.sources.openalex.OpenAlexClient.search")
+@patch("thesis_tools.sources.semantic_scholar.SemanticScholarClient.search")
+def test_run_topic_finder_announces_auto_generated_subquestions(
+    mock_ss, mock_oa, mock_arxiv, mock_crossref, mock_generate, tmp_path, capsys
+):
+    for m in (mock_ss, mock_oa, mock_arxiv, mock_crossref):
+        m.return_value = []
+    mock_generate.return_value = ["Auto Q1?", "Auto Q2?"]
+
+    output_path = tmp_path / "report.md"
+    inputs = TopicFinderInputs(
+        field="Psychology",
+        working_title="Some Working Title",
+        style="apa",
+        output_path=str(output_path),
+        use_llm_summaries=True,
+        auto_subquestions=True,
+    )
+
+    run_topic_finder(inputs)
+
+    err = capsys.readouterr().err
+    assert "Claude suggested (auto-accepted, non-interactive run):" in err
+    assert "1. Auto Q1?" in err
+    assert "2. Auto Q2?" in err
+
+
+@patch("thesis_tools.topic_finder.generate_subquestions")
+@patch("thesis_tools.sources.crossref.CrossrefClient.search")
+@patch("thesis_tools.sources.arxiv.ArxivClient.search")
+@patch("thesis_tools.sources.openalex.OpenAlexClient.search")
+@patch("thesis_tools.sources.semantic_scholar.SemanticScholarClient.search")
+def test_run_topic_finder_reports_no_auto_generated_subquestions(
+    mock_ss, mock_oa, mock_arxiv, mock_crossref, mock_generate, tmp_path, capsys
+):
+    for m in (mock_ss, mock_oa, mock_arxiv, mock_crossref):
+        m.return_value = []
+    mock_generate.return_value = []
+
+    output_path = tmp_path / "report.md"
+    inputs = TopicFinderInputs(
+        field="Psychology",
+        working_title="Some Working Title",
+        style="apa",
+        output_path=str(output_path),
+        use_llm_summaries=True,
+        auto_subquestions=True,
+    )
+
+    run_topic_finder(inputs)
+
+    err = capsys.readouterr().err
+    assert "Claude didn't return any sub-questions for this topic." in err

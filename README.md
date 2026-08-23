@@ -107,6 +107,14 @@ Interactive (recommended the first time):
 python -m thesis_tools topic-finder
 ```
 
+If you leave sub-questions blank and Claude is enabled, it suggests 3-4 for
+your topic, prints them, and asks you to confirm before anything else
+happens — no search or per-paper analysis runs against an unconfirmed batch.
+You can accept them as-is, or decline and type your own instead. Running
+non-interactively (`--field`/`--title` given directly, no human to confirm
+with) still shows whatever Claude generated in the console output, so you
+can see — and re-run with `--sub-questions` to override — what was used.
+
 Or non-interactively, e.g. for scripting:
 
 ```bash

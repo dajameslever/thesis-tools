@@ -171,6 +171,12 @@ def run_topic_finder(inputs: TopicFinderInputs) -> str:
     if not sub_questions and inputs.auto_subquestions and inputs.use_llm_summaries:
         print("Generating sub-questions with Claude...", file=sys.stderr)
         sub_questions = generate_subquestions(query_text, model=inputs.llm_model)
+        if sub_questions:
+            print("Claude suggested (auto-accepted, non-interactive run):", file=sys.stderr)
+            for i, q in enumerate(sub_questions, start=1):
+                print(f"  {i}. {q}", file=sys.stderr)
+        else:
+            print("Claude didn't return any sub-questions for this topic.", file=sys.stderr)
 
     subquestion_analysis = None
     if sub_questions:

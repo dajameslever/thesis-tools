@@ -116,6 +116,31 @@ def _ensure_anthropic_key_interactive() -> bool:
     return True
 
 
+def _generate_and_confirm_subquestions(working_title: str, research_question: Optional[str], project: ProjectState):
+    """Ask Claude for sub-questions, show them, and let the user confirm or
+    replace them right here — before any search or per-paper analysis (and
+    the API spend that comes with it) happens against an unconfirmed batch."""
+    print("Asking Claude to suggest sub-questions...\n")
+    topic_text = f"{working_title}. {research_question}" if research_question else working_title
+    suggested = generate_subquestions(topic_text, model=project.llm_model or "claude-sonnet-5")
+
+    if not suggested:
+        print("Claude didn't return any sub-questions for this topic.\n")
+        raw = _prompt("Type your own instead (semicolon-separated, optional — press Enter to skip)")
+        return _split_semicolons(raw)
+
+    print("Claude suggests:")
+    for i, q in enumerate(suggested, start=1):
+        print(f"  {i}. {q}")
+    print()
+
+    if _prompt("Use these sub-questions? (Y/n)", default="y").lower().startswith("y"):
+        return suggested
+
+    raw = _prompt("Type your own instead (semicolon-separated, optional — press Enter to proceed with none)")
+    return _split_semicolons(raw)
+
+
 def _interactive_topic_finder_inputs(project: ProjectState) -> TopicFinderInputs:
     print("=== Thesis Topic Finder ===")
     print("Answer a few questions and I'll scan free literature databases")
@@ -144,6 +169,8 @@ def _interactive_topic_finder_inputs(project: ProjectState) -> TopicFinderInputs
             + ("press Enter to have Claude suggest some" if use_llm else "press Enter to skip, since Claude access is off")
         )
         sub_questions = _split_semicolons(sub_questions_raw)
+        if not sub_questions and use_llm:
+            sub_questions = _generate_and_confirm_subquestions(working_title, research_question, project)
 
     return TopicFinderInputs(
         field=field,
@@ -153,6 +180,9 @@ def _interactive_topic_finder_inputs(project: ProjectState) -> TopicFinderInputs
         style=style,
         use_llm_summaries=use_llm,
         sub_questions=sub_questions,
+        # Already resolved (confirmed/edited/declined) above — don't let the
+        # pipeline silently generate a fresh, unconfirmed batch later.
+        auto_subquestions=False,
         contact_email=project.contact_email,
     )
 
@@ -412,7 +442,11 @@ def _run_topic_finder_command(args: argparse.Namespace) -> int:
         inputs.llm_model = llm_model
         inputs.contact_email = args.contact_email or inputs.contact_email
         inputs.output_path = args.output_path
-        inputs.auto_subquestions = args.auto_subquestions
+        # The interactive flow above already resolved sub-questions (asked,
+        # generated-and-confirmed, or deliberately left empty) — don't let
+        # the flag's True default re-enable auto-generation over that;
+        # an explicit --no-auto-subquestions still applies.
+        inputs.auto_subquestions = inputs.auto_subquestions and args.auto_subquestions
         inputs.use_llm_summaries = inputs.use_llm_summaries or args.llm_summaries
         inputs.reanalyze_from = args.reanalyze_from
 
