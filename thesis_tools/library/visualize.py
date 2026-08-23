@@ -14,12 +14,12 @@ from __future__ import annotations
 
 import datetime as _dt
 import html as _html
-from typing import Dict, List, Optional, Tuple
-
 import json as _json
+from typing import Dict, List, Optional, Tuple
 
 from ..links import doi_url, google_scholar_search_url, sciencedirect_search_url
 from ..recency import DEFAULT_OLD_THRESHOLD_YEARS, age_years, newest_year
+from ..relevance import score_relevance
 from ..subquestions import analyze_subquestions
 from .citation_graph import build_citation_network, build_coverage
 from .index_store import LibraryEntry, LibraryIndex
@@ -52,6 +52,7 @@ SOURCE_CONCENTRATION_WARN_THRESHOLD = 0.7  # one source supplying 70%+ of the li
 NO_ABSTRACT_WARN_THRESHOLD = 0.3  # 30%+ of papers missing an abstract
 OLD_PAPERS_WARN_THRESHOLD = 0.5  # 50%+ of papers past the "old" age threshold
 MISSING_REFERENCES_WARN_THRESHOLD = 0.5  # 50%+ of cited references not in the library
+LOW_RELEVANCE_THRESHOLD = 0.12  # same default as topic-finder's --min-relevance
 
 
 def _primary_source(entry: LibraryEntry) -> str:
@@ -64,6 +65,7 @@ def compute_stats(
     sub_questions: Optional[List[str]] = None,
     use_llm: bool = False,
     llm_model: str = "claude-sonnet-5",
+    research_question: Optional[str] = None,
 ) -> dict:
     """Pure computation over an already-loaded index — no I/O, easy to unit
     test independently of the HTML it ends up rendered into.
@@ -73,7 +75,9 @@ def compute_stats(
     each one (same analyzer Part 2's Markdown report and Part 3's literature
     review both use), so the visualization shows the same coverage gaps
     those already surface — rather than being purely library-wide stats
-    with no connection to the actual research questions."""
+    with no connection to the actual research questions. `research_question`,
+    when given, additionally flags papers with low relevance to it (same
+    scorer used elsewhere) — the "why is this even in my library" check."""
     entries = index.entries
     total = len(entries)
 
@@ -119,6 +123,24 @@ def compute_stats(
                 }
             )
 
+    # Papers that never showed up in ANY sub-question's supports/challenges/
+    # mixed lists — i.e. classified "unrelated" to every single one. Only
+    # meaningful once sub-questions are actually configured.
+    no_subquestion_coverage_titles: List[str] = []
+    if sub_questions:
+        covered_titles = {
+            title
+            for c in subquestion_coverage
+            for title in (*c["supports"], *c["challenges"], *c["mixed"])
+        }
+        no_subquestion_coverage_titles = [e.paper.title for e in entries if e.paper.title not in covered_titles]
+
+    low_relevance_titles: List[str] = []
+    if research_question:
+        for entry in entries:
+            if score_relevance(research_question, entry.paper) < LOW_RELEVANCE_THRESHOLD:
+                low_relevance_titles.append(entry.paper.title)
+
     stats = {
         "generated_at": _dt.datetime.now().strftime("%Y-%m-%d %H:%M"),
         "total": total,
@@ -137,6 +159,9 @@ def compute_stats(
         "references_fetched": references_fetched,
         "sub_questions": sub_questions,
         "subquestion_coverage": subquestion_coverage,
+        "no_subquestion_coverage_titles": no_subquestion_coverage_titles,
+        "research_question": research_question,
+        "low_relevance_titles": low_relevance_titles,
     }
     stats["weaknesses"] = _compute_weaknesses(stats)
     return stats
@@ -249,6 +274,30 @@ def _compute_weaknesses(stats: dict) -> List[dict]:
                 "detail": "A real gap in your library, not just a display quirk — the same thing Part 3's literature review "
                 "would flag for a follow-up search.",
                 "items": no_coverage,
+            }
+        )
+
+    not_linked = stats.get("no_subquestion_coverage_titles") or []
+    if not_linked:
+        weaknesses.append(
+            {
+                "level": "warning",
+                "title": f"{len(not_linked)} paper(s) don't relate to any of your sub-questions",
+                "detail": "Classified \"unrelated\" to every sub-question checked — worth a look to confirm they still "
+                "belong in this library, or that a sub-question should be added to cover what they're actually about.",
+                "items": not_linked,
+            }
+        )
+
+    low_relevance = stats.get("low_relevance_titles") or []
+    if low_relevance:
+        weaknesses.append(
+            {
+                "level": "warning",
+                "title": f"{len(low_relevance)} paper(s) have low relevance to your research question",
+                "detail": f'Title/text overlap with "{stats.get("research_question")}" scored below '
+                f"{LOW_RELEVANCE_THRESHOLD:.0%} — worth confirming these still belong here.",
+                "items": low_relevance,
             }
         )
 
@@ -849,6 +898,15 @@ def build_visualization_html(
     sub_questions: Optional[List[str]] = None,
     use_llm: bool = False,
     llm_model: str = "claude-sonnet-5",
+    research_question: Optional[str] = None,
 ) -> str:
     """Convenience entry point used by the CLI: compute + render in one call."""
-    return render_html(compute_stats(index, sub_questions=sub_questions, use_llm=use_llm, llm_model=llm_model))
+    return render_html(
+        compute_stats(
+            index,
+            sub_questions=sub_questions,
+            use_llm=use_llm,
+            llm_model=llm_model,
+            research_question=research_question,
+        )
+    )

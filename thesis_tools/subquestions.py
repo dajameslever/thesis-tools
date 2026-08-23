@@ -16,6 +16,7 @@ Two tiers, same as summarize.py:
 from __future__ import annotations
 
 import re
+import sys
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
@@ -232,10 +233,16 @@ def analyze_subquestions(
         return analysis
 
     client = llm.get_client(quiet=True) if use_llm else None
+    if client is not None and papers:
+        # This is the slow path — one Claude call per paper — so make it
+        # visible. The heuristic path below is local/instant and doesn't
+        # need a progress line even for a large library.
+        print(f"Classifying {len(papers)} paper(s) against {len(sub_questions)} sub-question(s) with Claude...", file=sys.stderr)
 
-    for paper in papers:
+    for i, paper in enumerate(papers, start=1):
         stances: Optional[Dict[str, StanceResult]] = None
         if client is not None:
+            print(f"  [{i}/{len(papers)}] {paper.title}", file=sys.stderr)
             stances = _llm_stance_for_paper(client, paper, sub_questions, model)
         if stances is None:
             text = _text_for_stance(paper)

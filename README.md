@@ -302,6 +302,16 @@ thing would mean several real network round-trips per file trying each one
 in turn — noticeably slow — and risks resolving a citation instead of the
 paper itself.
 
+After the per-file loop finishes, a second pass recomputes relevance
+scores, summaries, and sub-question stances for **every** entry in the
+index (not just the ones just scanned) — this is what keeps
+`--question`/`--sub-questions` updates instant on a rerun without
+rescanning files, but with `--llm-summaries` it's a Claude call per paper,
+so it also gets its own progress notice and, per paper, a counter and
+title while it's classifying — the same visibility as the scan phase
+above, not a silent gap between "files indexed" and the final summary
+line.
+
 Run `python -m thesis_tools index-library --help` for all options.
 
 ### Visualizing what's indexed
@@ -312,10 +322,10 @@ python -m thesis_tools visualize-library
 
 Renders a single self-contained HTML file (`library/visualization.html` by
 default — open it straight in a browser, no server needed) from the index
-`index-library` already built. It automatically reuses whatever
-sub-questions Part 1/`configure` already saved (pass `--sub-questions` to
-override, and `--llm-summaries` to classify with Claude instead of the
-heuristic):
+`index-library` already built. It automatically reuses whatever research
+question/sub-questions Part 1/`configure` already saved (`--question` and
+`--sub-questions` to override, `--llm-summaries` to classify with Claude
+instead of the heuristic):
 
 - **Coverage by sub-question** — the page's anchor, shown first: for each
   sub-question, how many indexed papers support it, challenge it, or give
@@ -351,10 +361,13 @@ heuristic):
 - **Weaknesses worth a second look** — computed flags, not just raw counts:
   unresolved files, possible duplicate downloads, a high share of papers
   with no abstract on record, over-reliance on a single source (70%+ from
-  one database), a high share of cited references still missing, and a
-  library skewed toward older papers. Each flag lists the specific
-  files/papers involved — with the same find-it links where relevant — not
-  just a percentage.
+  one database), a high share of cited references still missing, a library
+  skewed toward older papers, papers that don't relate to **any** of your
+  sub-questions (classified "unrelated" to all of them — worth confirming
+  they still belong, or that a sub-question is missing to cover them), and
+  — with `--question` set — papers with low relevance to your actual
+  research question. Each flag lists the specific files/papers involved —
+  with the same find-it links where relevant — not just a percentage.
 
 It's pure local computation over the existing index — no network calls, so
 it's cheap to regenerate (`-o some/path.html` to change where it's written)

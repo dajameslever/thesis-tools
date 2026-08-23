@@ -187,12 +187,23 @@ def run_library_indexer(inputs: LibraryIndexerInputs) -> Dict[str, object]:
 
     # Relevance/stance/summaries are recomputed fresh on every run from
     # whatever's already in the index — never cached — so editing
-    # --question/--sub-questions and re-running updates them immediately,
-    # with no need to rescan or re-fetch anything.
+    # --question/--sub-questions and re-running updates them instantly,
+    # with no need to rescan or re-fetch anything. This runs over EVERY
+    # entry in the index, not just the ones just indexed above, so it's a
+    # second slow-ish pass after the per-file loop above finishes — worth
+    # its own progress notice, especially with --llm-summaries (a Claude
+    # call per paper).
+    print(
+        f"Scoring relevance and building summaries for {len(index.entries)} paper(s) in the index"
+        + (" with Claude..." if inputs.use_llm else "..."),
+        file=sys.stderr,
+    )
     summaries: Dict[str, str] = {}
     relevance_scores: Dict[str, float] = {}
-    for entry in index.entries:
+    for i, entry in enumerate(index.entries, start=1):
         key = entry.paper.key()
+        if inputs.use_llm:
+            print(f"  [{i}/{len(index.entries)}] {entry.paper.title}", file=sys.stderr)
         # "What it's about" doesn't need a research question — fall back to the
         # paper's own title so the extractive summarizer still has something
         # to rank sentences against.

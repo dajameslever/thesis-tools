@@ -315,3 +315,70 @@ def test_build_visualization_html_anchors_on_subquestions_end_to_end():
 
     assert question in html
     assert "Relevant Paper" in html
+
+
+def test_compute_stats_flags_papers_not_linked_to_any_subquestion():
+    question = "Does digital transformation affect sustainability?"
+    unrelated_entry = _entry("a.pdf", title="Coffee Prices in Brazil", abstract=None)
+    unrelated_entry.paper.full_text_excerpt = "This paper is about coffee farming economics, nothing else."
+    index = LibraryIndex([unrelated_entry])
+
+    stats = compute_stats(index, sub_questions=[question], use_llm=False)
+
+    assert stats["no_subquestion_coverage_titles"] == ["Coffee Prices in Brazil"]
+    assert any("don't relate to any of your sub-questions" in w["title"] for w in stats["weaknesses"])
+
+
+def test_compute_stats_does_not_flag_papers_that_are_linked():
+    question = "Does digital transformation affect sustainability?"
+    supporting_entry = _entry("a.pdf", title="DT Paper", abstract=None)
+    supporting_entry.paper.full_text_excerpt = (
+        "We find a significant effect of digital transformation on sustainability, consistent with theory."
+    )
+    index = LibraryIndex([supporting_entry])
+
+    stats = compute_stats(index, sub_questions=[question], use_llm=False)
+
+    assert stats["no_subquestion_coverage_titles"] == []
+    assert not any("don't relate to any" in w["title"] for w in stats["weaknesses"])
+
+
+def test_compute_stats_flags_low_relevance_papers():
+    index = LibraryIndex(
+        [
+            _entry("a.pdf", title="Digital Transformation and Sustainability Targets"),
+            _entry("b.pdf", title="A Completely Unrelated Coffee Farming Study"),
+        ]
+    )
+
+    stats = compute_stats(index, research_question="digital transformation sustainability targets")
+
+    assert stats["low_relevance_titles"] == ["A Completely Unrelated Coffee Farming Study"]
+    assert any("low relevance to your research question" in w["title"] for w in stats["weaknesses"])
+
+
+def test_compute_stats_no_relevance_flag_without_research_question():
+    index = LibraryIndex([_entry("a.pdf", title="Anything At All")])
+    stats = compute_stats(index)
+    assert stats["low_relevance_titles"] == []
+    assert stats["research_question"] is None
+
+
+def test_render_html_shows_low_relevance_and_unlinked_weaknesses():
+    question = "Does digital transformation affect sustainability?"
+    entry = _entry("a.pdf", title="Coffee Prices in Brazil", abstract=None)
+    entry.paper.full_text_excerpt = "This paper is about coffee farming economics, nothing else."
+    index = LibraryIndex([entry])
+
+    html = render_html(
+        compute_stats(
+            index,
+            sub_questions=[question],
+            use_llm=False,
+            research_question="digital transformation sustainability",
+        )
+    )
+
+    assert "Coffee Prices in Brazil" in html
+    assert "don&#x27;t relate to any of your sub-questions" in html
+    assert "low relevance to your research question" in html

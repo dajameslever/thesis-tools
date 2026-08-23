@@ -142,3 +142,27 @@ def test_analyze_subquestions_uses_full_text_excerpt_when_no_abstract():
 
 def test_heuristic_stance_unrelated_with_neither_abstract_nor_excerpt():
     assert _heuristic_stance(None, "Does X affect Y?").stance == "unrelated"
+
+
+@patch("thesis_tools.subquestions.llm.get_client")
+@patch("thesis_tools.subquestions.llm.ask")
+def test_analyze_subquestions_prints_progress_with_llm(mock_ask, mock_get_client, capsys):
+    mock_get_client.return_value = object()
+    mock_ask.return_value = "1: supports - confirms it."
+    paper = Paper(title="Study A", doi="10.1/a", abstract="Some abstract text.")
+    question = "Does sleep deprivation affect adolescent decision-making?"
+
+    analyze_subquestions([question], [paper], use_llm=True)
+
+    err = capsys.readouterr().err
+    assert "Classifying 1 paper(s) against 1 sub-question(s) with Claude" in err
+    assert "[1/1] Study A" in err
+
+
+def test_analyze_subquestions_silent_without_llm(capsys):
+    paper = Paper(title="Study A", doi="10.1/a", abstract="Some abstract text.")
+    question = "Does sleep deprivation affect adolescent decision-making?"
+
+    analyze_subquestions([question], [paper], use_llm=False)
+
+    assert capsys.readouterr().err == ""

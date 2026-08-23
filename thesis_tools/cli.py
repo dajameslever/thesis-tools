@@ -411,6 +411,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     vl.add_argument("--index-path", default="library/index.json", help="Path to the index built by index-library (default: library/index.json)")
     vl.add_argument("-o", "--output", dest="output_path", default="library/visualization.html", help="Where to write the HTML page (default: library/visualization.html)")
+    vl.add_argument("--question", dest="research_question", default=None, help="Your research question/topic (default: whatever Part 1 already used) — flags indexed papers with low relevance to it")
     vl.add_argument(
         "--sub-questions",
         default=None,
@@ -645,6 +646,7 @@ def _run_visualize_library_command(args: argparse.Namespace) -> int:
 
     project = ProjectState.load(args.project_file)
     sub_questions = _split_semicolons(args.sub_questions) or list(project.sub_questions)
+    research_question = args.research_question or project.research_question
     use_llm = args.llm_summaries or project.use_llm
     llm_model = args.llm_model or project.llm_model or "claude-sonnet-5"
     if use_llm:
@@ -653,7 +655,13 @@ def _run_visualize_library_command(args: argparse.Namespace) -> int:
             print(f"Claude requested but unavailable ({issue}) — using heuristic stance classification for this run.", file=sys.stderr)
 
     index = LibraryIndex.load(index_path)
-    html = build_visualization_html(index, sub_questions=sub_questions, use_llm=use_llm, llm_model=llm_model)
+    html = build_visualization_html(
+        index,
+        sub_questions=sub_questions,
+        use_llm=use_llm,
+        llm_model=llm_model,
+        research_question=research_question,
+    )
 
     output_path = Path(args.output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)

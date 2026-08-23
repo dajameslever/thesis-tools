@@ -131,3 +131,47 @@ def test_visualize_library_no_subquestions_shows_prompt(tmp_path):
     assert rc == 0
     html = output_path.read_text(encoding="utf-8")
     assert "No sub-questions configured for this run" in html
+
+
+def test_visualize_library_flags_low_relevance_papers_with_explicit_question(tmp_path):
+    index_path = tmp_path / "library" / "index.json"
+    output_path = tmp_path / "library" / "visualization.html"
+    project_file = tmp_path / "project.json"
+    _index_with_paper(index_path, title="A Completely Unrelated Coffee Farming Study")
+
+    rc = main(
+        [
+            "visualize-library",
+            "--index-path", str(index_path),
+            "--output", str(output_path),
+            "--project-file", str(project_file),
+            "--question", "digital transformation sustainability targets",
+        ]
+    )
+
+    assert rc == 0
+    html = output_path.read_text(encoding="utf-8")
+    assert "low relevance to your research question" in html
+
+
+def test_visualize_library_reuses_project_research_question(tmp_path):
+    from thesis_tools.project import ProjectState
+
+    index_path = tmp_path / "library" / "index.json"
+    output_path = tmp_path / "library" / "visualization.html"
+    project_file = tmp_path / "project.json"
+    ProjectState(research_question="digital transformation sustainability targets").save(str(project_file))
+    _index_with_paper(index_path, title="A Completely Unrelated Coffee Farming Study")
+
+    rc = main(
+        [
+            "visualize-library",
+            "--index-path", str(index_path),
+            "--output", str(output_path),
+            "--project-file", str(project_file),
+        ]
+    )
+
+    assert rc == 0
+    html = output_path.read_text(encoding="utf-8")
+    assert "low relevance to your research question" in html

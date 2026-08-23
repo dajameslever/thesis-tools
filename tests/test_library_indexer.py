@@ -359,3 +359,25 @@ def test_run_library_indexer_announces_fetch_references_mode(tmp_path, capsys):
     err = capsys.readouterr().err
     assert "Fetching each paper's own reference list too" in err
     assert "reference(s) fetched for the citation-coverage view" in err
+
+
+def test_run_library_indexer_announces_summary_scoring_phase(tmp_path, capsys):
+    downloads = tmp_path / "downloads"
+    downloads.mkdir()
+    (downloads / "paper.pdf").write_bytes(b"%PDF-1.4 fake")
+    index_path = tmp_path / "library" / "index.json"
+    processed_dir = tmp_path / "processed"
+
+    from thesis_tools.library.extract import ExtractedDocument
+
+    with patch("thesis_tools.library.library_indexer.extract_document") as mock_extract, patch(
+        "thesis_tools.library.library_indexer.identify_document", side_effect=_fake_identify()
+    ):
+        mock_extract.return_value = ExtractedDocument(text="some text", title_hint=None, author_hint=None, file_type="pdf")
+        inputs = LibraryIndexerInputs(
+            folder=str(downloads), index_path=str(index_path), processed_dir=str(processed_dir)
+        )
+        run_library_indexer(inputs)
+
+    err = capsys.readouterr().err
+    assert "Scoring relevance and building summaries for 1 paper(s) in the index" in err
