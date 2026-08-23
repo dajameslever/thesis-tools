@@ -208,3 +208,79 @@ def test_run_topic_finder_reports_no_auto_generated_subquestions(
 
     err = capsys.readouterr().err
     assert "Claude didn't return any sub-questions for this topic." in err
+
+
+@patch("thesis_tools.topic_finder.download_papers")
+@patch("thesis_tools.sources.crossref.CrossrefClient.search")
+@patch("thesis_tools.sources.arxiv.ArxivClient.search")
+@patch("thesis_tools.sources.openalex.OpenAlexClient.search")
+@patch("thesis_tools.sources.semantic_scholar.SemanticScholarClient.search")
+def test_run_topic_finder_downloads_papers_when_opted_in(
+    mock_ss, mock_oa, mock_arxiv, mock_crossref, mock_download, tmp_path
+):
+    mock_ss.return_value = [
+        Paper(
+            title="Open Access Paper On Sleep",
+            year=2021,
+            abstract="An open access paper about sleep and decision-making.",
+            pdf_url="https://example.org/oa.pdf",
+            sources=["semanticscholar"],
+        )
+    ]
+    mock_oa.return_value = []
+    mock_arxiv.return_value = []
+    mock_crossref.return_value = []
+    mock_download.return_value = 1
+
+    output_path = tmp_path / "report.md"
+    inputs = TopicFinderInputs(
+        field="Psychology",
+        working_title="Sleep and Decision-Making",
+        style="apa",
+        output_path=str(output_path),
+        download_papers=True,
+        download_dir=str(tmp_path / "processed"),
+    )
+
+    run_topic_finder(inputs)
+
+    mock_download.assert_called_once()
+    args, kwargs = mock_download.call_args
+    downloaded_papers = args[0]
+    assert len(downloaded_papers) == 1
+    assert downloaded_papers[0].pdf_url == "https://example.org/oa.pdf"
+    assert kwargs["dest_dir"] == str(tmp_path / "processed")
+
+
+@patch("thesis_tools.topic_finder.download_papers")
+@patch("thesis_tools.sources.crossref.CrossrefClient.search")
+@patch("thesis_tools.sources.arxiv.ArxivClient.search")
+@patch("thesis_tools.sources.openalex.OpenAlexClient.search")
+@patch("thesis_tools.sources.semantic_scholar.SemanticScholarClient.search")
+def test_run_topic_finder_skips_download_when_not_opted_in(
+    mock_ss, mock_oa, mock_arxiv, mock_crossref, mock_download, tmp_path
+):
+    mock_ss.return_value = [
+        Paper(
+            title="Open Access Paper On Sleep",
+            year=2021,
+            abstract="An open access paper about sleep and decision-making.",
+            pdf_url="https://example.org/oa.pdf",
+            sources=["semanticscholar"],
+        )
+    ]
+    mock_oa.return_value = []
+    mock_arxiv.return_value = []
+    mock_crossref.return_value = []
+
+    output_path = tmp_path / "report.md"
+    inputs = TopicFinderInputs(
+        field="Psychology",
+        working_title="Sleep and Decision-Making",
+        style="apa",
+        output_path=str(output_path),
+    )
+
+    run_topic_finder(inputs)
+
+    mock_download.assert_not_called()

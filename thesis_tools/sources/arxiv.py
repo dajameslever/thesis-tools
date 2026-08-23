@@ -52,6 +52,7 @@ class ArxivClient(SourceClient):
             year = None
             if published_el is not None and published_el.text:
                 year = int(published_el.text[:4])
+            entry_url = id_el.text.strip() if id_el is not None and id_el.text else None
             papers.append(
                 Paper(
                     title=_clean(title_el.text if title_el is not None else ""),
@@ -60,7 +61,10 @@ class ArxivClient(SourceClient):
                     venue="arXiv preprint",
                     abstract=_clean(summary_el.text if summary_el is not None else None),
                     doi=None,
-                    url=id_el.text.strip() if id_el is not None and id_el.text else None,
+                    url=entry_url,
+                    # Every arXiv abstract page has a PDF at the same id with
+                    # /abs/ swapped for /pdf/ — always open access.
+                    pdf_url=entry_url.replace("/abs/", "/pdf/") if entry_url else None,
                     sources=["arxiv"],
                 )
             )

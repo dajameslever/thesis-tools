@@ -79,6 +79,7 @@ def test_interactive_topic_finder_calls_confirm_flow_when_llm_on(monkeypatch, tm
         "y",  # use_llm
         "",  # sub_questions_raw -> blank triggers auto-generate-and-confirm
         "y",  # confirm suggested sub-questions
+        "n",  # download-papers prompt
     ])
 
     with patch("builtins.input", lambda *_: next(answers)), \
@@ -89,3 +90,40 @@ def test_interactive_topic_finder_calls_confirm_flow_when_llm_on(monkeypatch, tm
     # Already confirmed here — the pipeline must not silently regenerate a
     # fresh, unconfirmed batch later.
     assert inputs.auto_subquestions is False
+
+
+def test_bare_topic_finder_goes_interactive_even_with_saved_project_state(tmp_path, monkeypatch):
+    """Regression test: once `configure` (or a prior run) has saved field/
+    working_title to the project file, a bare `topic-finder` with no flags
+    must still walk through the interactive prompts (and therefore the
+    sub-question confirmation step) rather than silently taking the
+    flags/non-interactive shortcut just because project defaults exist."""
+    from thesis_tools.cli import main
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    project_file = tmp_path / "project.json"
+    ProjectState(field="Psychology", working_title="Sleep and Memory", style="apa").save(str(project_file))
+
+    answers = [
+        "",  # field -> keep saved default
+        "",  # working_title -> keep saved default
+        "",  # research_question
+        "",  # extra_keywords
+        "",  # style -> keep saved default
+        "n",  # use_llm
+        "",  # sub_questions_raw
+        "n",  # download_papers
+    ]
+
+    with patch("builtins.input", side_effect=answers) as mock_input, \
+         patch("thesis_tools.sources.semantic_scholar.SemanticScholarClient.search", return_value=[]), \
+         patch("thesis_tools.sources.openalex.OpenAlexClient.search", return_value=[]), \
+         patch("thesis_tools.sources.crossref.CrossrefClient.search", return_value=[]), \
+         patch("thesis_tools.sources.arxiv.ArxivClient.search", return_value=[]):
+        rc = main(["topic-finder", "--project-file", str(project_file)])
+
+    assert rc == 0
+    # The old bug took the flags/non-interactive shortcut whenever project
+    # state already had field+working_title, calling input() zero times.
+    assert mock_input.call_count == len(answers)

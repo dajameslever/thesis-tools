@@ -172,6 +172,12 @@ def _interactive_topic_finder_inputs(project: ProjectState) -> TopicFinderInputs
         if not sub_questions and use_llm:
             sub_questions = _generate_and_confirm_subquestions(working_title, research_question, project)
 
+    download_papers = _prompt(
+        "Also download each shortlisted paper's open-access PDF (where one exists) and extract its "
+        "text into a 'processed' folder? Skips papers with no open-access copy. (y/N)",
+        default="n",
+    ).lower().startswith("y")
+
     return TopicFinderInputs(
         field=field,
         working_title=working_title,
@@ -184,6 +190,7 @@ def _interactive_topic_finder_inputs(project: ProjectState) -> TopicFinderInputs
         # pipeline silently generate a fresh, unconfirmed batch later.
         auto_subquestions=False,
         contact_email=project.contact_email,
+        download_papers=download_papers,
     )
 
 
@@ -321,6 +328,13 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     tf.add_argument("--no-auto-subquestions", dest="auto_subquestions", action="store_false", help="Don't auto-generate sub-questions via Claude when none are given")
     tf.set_defaults(auto_subquestions=True)
+    tf.add_argument(
+        "--download-papers",
+        action="store_true",
+        help="Download each shortlisted paper's open-access PDF (where one exists) and extract its text "
+        "into --download-dir. Never follows a paywalled link — only what a source API reports as open access.",
+    )
+    tf.add_argument("--download-dir", default="processed", help="Where to save downloaded PDFs + extracted text (default: processed)")
     tf.add_argument("--contact-email", help="Optional email sent to OpenAlex/Crossref's 'polite pool' for faster, more reliable responses")
     tf.add_argument("-o", "--output", dest="output_path", help="Where to write the Markdown report (default: output/<slug>-<timestamp>.md)")
     tf.add_argument(
@@ -400,10 +414,34 @@ def _run_topic_finder_command(args: argparse.Namespace) -> int:
     # part's own sensible default. Deliberately NOT persisted unless the user
     # actually passes --llm-model — see the project.updated() call below.
     llm_model = args.llm_model or project.llm_model or "claude-sonnet-5"
-    field = args.field or project.field
-    working_title = args.working_title or project.working_title
 
-    if field and working_title:
+    # Only skip the interactive walkthrough when THIS invocation gives enough
+    # to proceed without it: --field/--title passed directly (a scripting
+    # shortcut), or --non-interactive explicitly opting out of prompts (in
+    # which case falling back to saved project values is fine — the user
+    # asked not to be asked). A bare `topic-finder` with no flags always goes
+    # interactive, even once a project file exists from a previous run/
+    # `configure` — otherwise things like sub-question confirmation would
+    # only ever happen the first time, never again.
+    if args.non_interactive:
+        field = args.field or project.field
+        working_title = args.working_title or project.working_title
+        if not (field and working_title):
+            print(
+                "error: --non-interactive requires --field and --title (or run `thesis-tools configure` "
+                "first to save them)",
+                file=sys.stderr,
+            )
+            return 2
+        skip_interactive = True
+    elif args.field and args.working_title:
+        field = args.field
+        working_title = args.working_title
+        skip_interactive = True
+    else:
+        skip_interactive = False
+
+    if skip_interactive:
         inputs = TopicFinderInputs(
             field=field,
             working_title=working_title,
@@ -421,14 +459,9 @@ def _run_topic_finder_command(args: argparse.Namespace) -> int:
             sub_questions=_split_semicolons(args.sub_questions) or (project.sub_questions or None),
             auto_subquestions=args.auto_subquestions,
             reanalyze_from=args.reanalyze_from,
+            download_papers=args.download_papers,
+            download_dir=args.download_dir,
         )
-    elif args.non_interactive:
-        print(
-            "error: --non-interactive requires --field and --title (or run `thesis-tools configure` "
-            "first to save them)",
-            file=sys.stderr,
-        )
-        return 2
     else:
         inputs = _interactive_topic_finder_inputs(project)
         # CLI flags still override/augment interactive answers where given.
@@ -449,6 +482,8 @@ def _run_topic_finder_command(args: argparse.Namespace) -> int:
         inputs.auto_subquestions = inputs.auto_subquestions and args.auto_subquestions
         inputs.use_llm_summaries = inputs.use_llm_summaries or args.llm_summaries
         inputs.reanalyze_from = args.reanalyze_from
+        inputs.download_papers = inputs.download_papers or args.download_papers
+        inputs.download_dir = args.download_dir
 
     try:
         report_path = run_topic_finder(inputs)

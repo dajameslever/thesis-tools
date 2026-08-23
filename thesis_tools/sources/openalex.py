@@ -66,6 +66,9 @@ class OpenAlexClient(SourceClient):
             if doi:
                 doi = doi.replace("https://doi.org/", "")
             biblio = item.get("biblio") or {}
+            best_oa_location = item.get("best_oa_location") or {}
+            open_access = item.get("open_access") or {}
+            pdf_url = best_oa_location.get("pdf_url") or open_access.get("oa_url")
             papers.append(
                 Paper(
                     title=item.get("display_name") or item.get("title") or "",
@@ -79,6 +82,7 @@ class OpenAlexClient(SourceClient):
                     issue=biblio.get("issue"),
                     pages=_pages(biblio),
                     citation_count=item.get("cited_by_count"),
+                    pdf_url=pdf_url,
                     sources=["openalex"],
                 )
             )

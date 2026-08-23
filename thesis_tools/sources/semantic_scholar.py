@@ -20,7 +20,7 @@ from .base import Paper, SourceClient
 SEARCH_URL = "https://api.semanticscholar.org/graph/v1/paper/search"
 LOOKUP_URL = "https://api.semanticscholar.org/graph/v1/paper/DOI:{doi}"
 REFERENCES_URL = "https://api.semanticscholar.org/graph/v1/paper/DOI:{doi}/references"
-FIELDS = "title,abstract,year,authors,venue,externalIds,url,citationCount"
+FIELDS = "title,abstract,year,authors,venue,externalIds,url,citationCount,openAccessPdf"
 
 MAX_RETRIES = 2
 BASE_BACKOFF_SECONDS = 1.5
@@ -51,6 +51,7 @@ def _parse_item(item: dict) -> Optional[Paper]:
         return None
     authors = [a.get("name", "") for a in (item.get("authors") or []) if a.get("name")]
     external_ids = item.get("externalIds") or {}
+    open_access_pdf = item.get("openAccessPdf") or {}
     return Paper(
         title=item.get("title") or "",
         authors=authors,
@@ -60,6 +61,7 @@ def _parse_item(item: dict) -> Optional[Paper]:
         doi=external_ids.get("DOI"),
         url=item.get("url"),
         citation_count=item.get("citationCount"),
+        pdf_url=open_access_pdf.get("url") or None,
         sources=["semanticscholar"],
     )
 

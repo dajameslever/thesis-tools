@@ -33,6 +33,7 @@ def test_semantic_scholar_parses_results(mock_get):
                     "externalIds": {"DOI": "10.1/x"},
                     "url": "https://example.com/paper",
                     "citationCount": 5,
+                    "openAccessPdf": {"url": "https://example.org/oa.pdf"},
                 }
             ]
         }
@@ -44,6 +45,16 @@ def test_semantic_scholar_parses_results(mock_get):
     assert p.authors == ["Jane Doe"]
     assert p.doi == "10.1/x"
     assert p.sources == ["semanticscholar"]
+    assert p.pdf_url == "https://example.org/oa.pdf"
+
+
+@patch("thesis_tools.sources.semantic_scholar.requests.get")
+def test_semantic_scholar_pdf_url_none_when_not_open_access(mock_get):
+    mock_get.return_value = _mock_response(
+        json_data={"data": [{"title": "Paywalled Paper", "year": 2021}]}
+    )
+    results = SemanticScholarClient().search("sleep cognition")
+    assert results[0].pdf_url is None
 
 
 @patch("thesis_tools.sources.semantic_scholar.requests.get")
@@ -109,6 +120,7 @@ def test_openalex_parses_results(mock_get):
                     "id": "https://openalex.org/W123",
                     "biblio": {"volume": "5", "issue": "2", "first_page": "1", "last_page": "10"},
                     "cited_by_count": 3,
+                    "best_oa_location": {"pdf_url": "https://example.org/oa.pdf"},
                 }
             ]
         }
@@ -119,6 +131,23 @@ def test_openalex_parses_results(mock_get):
     assert p.doi == "10.1/x"
     assert p.pages == "1-10"
     assert p.abstract == "An abstract."
+    assert p.pdf_url == "https://example.org/oa.pdf"
+
+
+@patch("thesis_tools.sources.openalex.requests.get")
+def test_openalex_falls_back_to_open_access_oa_url(mock_get):
+    mock_get.return_value = _mock_response(
+        json_data={
+            "results": [
+                {
+                    "display_name": "Sleep and Cognition",
+                    "open_access": {"oa_url": "https://example.org/fallback.pdf"},
+                }
+            ]
+        }
+    )
+    results = OpenAlexClient().search("sleep cognition")
+    assert results[0].pdf_url == "https://example.org/fallback.pdf"
 
 
 @patch("thesis_tools.sources.crossref.requests.get")
@@ -182,6 +211,7 @@ def test_arxiv_parses_atom_feed(mock_get):
     assert p.year == 2021
     assert p.authors == ["Jane Doe"]
     assert p.url == "http://arxiv.org/abs/1234.5678v1"
+    assert p.pdf_url == "http://arxiv.org/pdf/1234.5678v1"
 
 
 @patch("thesis_tools.sources.arxiv.requests.get")

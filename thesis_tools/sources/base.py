@@ -29,6 +29,11 @@ class Paper:
     # to ground direct quotations in text we've actually seen, rather than
     # letting an LLM improvise a plausible-sounding one from the abstract.
     full_text_excerpt: Optional[str] = None
+    # A direct, legitimate open-access PDF link (arXiv's own PDF endpoint,
+    # Semantic Scholar's openAccessPdf, OpenAlex's best_oa_location), when the
+    # source API says one exists. None means "no known open-access copy" —
+    # never a paywall/publisher link to bypass.
+    pdf_url: Optional[str] = None
 
     def key(self) -> str:
         """A best-effort stable identifier, preferring DOI."""

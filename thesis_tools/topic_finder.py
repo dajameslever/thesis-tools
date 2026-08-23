@@ -12,6 +12,7 @@ from typing import List, Optional
 from . import llm
 from .citations import STYLES
 from .dedupe import dedupe_papers
+from .paper_download import download_papers
 from .relevance import keywords_from_text, score_relevance, title_similarity
 from .report import ScoredPaper, build_report
 from .sources import ALL_SOURCES
@@ -44,6 +45,13 @@ class TopicFinderInputs:
     # against (possibly changed) sub_questions/style/etc — so editing your
     # sub-questions doesn't mean re-hitting the search APIs from scratch.
     reanalyze_from: Optional[str] = None
+    # Opt-in: download each shortlisted paper's open-access PDF (where a
+    # source API reports one) and extract its text, saving both under
+    # download_dir. Never follows a paywalled/scraped link — see
+    # paper_download.py. Off by default: it costs bandwidth/time and not
+    # every paper has an open-access copy.
+    download_papers: bool = False
+    download_dir: str = "processed"
 
 
 def _slugify(text: str) -> str:
@@ -166,6 +174,16 @@ def run_topic_finder(inputs: TopicFinderInputs) -> str:
     # relevance scoring underrates them), then by relevance.
     scored.sort(key=lambda sp: (sp.title_similarity, sp.relevance), reverse=True)
     top = scored[: inputs.top_n]
+
+    if inputs.download_papers:
+        candidates = [sp.paper for sp in top if sp.paper.pdf_url]
+        print(
+            f"Downloading {len(candidates)} open-access PDF(s) of {len(top)} shortlisted paper(s) "
+            f"into {inputs.download_dir}/...",
+            file=sys.stderr,
+        )
+        saved = download_papers(candidates, dest_dir=inputs.download_dir)
+        print(f"  -> saved {saved} PDF(s) + extracted text excerpt(s)", file=sys.stderr)
 
     sub_questions = list(inputs.sub_questions) if inputs.sub_questions else []
     if not sub_questions and inputs.auto_subquestions and inputs.use_llm_summaries:

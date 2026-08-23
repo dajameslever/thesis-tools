@@ -107,6 +107,13 @@ Interactive (recommended the first time):
 python -m thesis_tools topic-finder
 ```
 
+A bare `topic-finder` with no flags always walks through the interactive
+prompts — even once `configure` or an earlier run has already saved a
+field/title/style to the project file, so a fresh run through the checklist
+(sub-question confirmation included) happens every time, not just the
+first. Passing `--field` and `--title` directly, or `--non-interactive`,
+skips straight to searching using saved/given values instead.
+
 If you leave sub-questions blank and Claude is enabled, it suggests 3-4 for
 your topic, prints them, and asks you to confirm before anything else
 happens — no search or per-paper analysis runs against an unconfirmed batch.
@@ -114,6 +121,19 @@ You can accept them as-is, or decline and type your own instead. Running
 non-interactively (`--field`/`--title` given directly, no human to confirm
 with) still shows whatever Claude generated in the console output, so you
 can see — and re-run with `--sub-questions` to override — what was used.
+Either way, the sub-questions actually used are saved back into the shared
+project file, so `index-library`/`literature-review` reuse the same ones.
+
+Also available, opt-in: `--download-papers` (or the matching interactive
+prompt) downloads each shortlisted paper's PDF where — and only where — a
+source API itself reports an open-access copy (arXiv, Semantic Scholar's
+`openAccessPdf`, OpenAlex's best OA location), extracts its text, and saves
+both under `--download-dir` (default: `processed/`) as `processed/pdfs/
+<slug>.pdf` and `processed/text/<slug>.txt`. It never follows a paywalled or
+scraped link, and papers with no known open-access copy are silently
+skipped. This is the same extraction Part 2 uses on local files, so the
+resulting excerpt can ground a direct quotation in Part 3's literature
+review rather than just an abstract.
 
 Or non-interactively, e.g. for scripting:
 
