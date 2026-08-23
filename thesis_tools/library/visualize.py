@@ -20,6 +20,7 @@ import json as _json
 
 from ..links import doi_url, google_scholar_search_url, sciencedirect_search_url
 from ..recency import DEFAULT_OLD_THRESHOLD_YEARS, age_years, newest_year
+from ..subquestions import analyze_subquestions
 from .citation_graph import build_citation_network, build_coverage
 from .index_store import LibraryEntry, LibraryIndex
 
@@ -58,9 +59,21 @@ def _primary_source(entry: LibraryEntry) -> str:
     return sources[0] if sources else "unknown"
 
 
-def compute_stats(index: LibraryIndex) -> dict:
+def compute_stats(
+    index: LibraryIndex,
+    sub_questions: Optional[List[str]] = None,
+    use_llm: bool = False,
+    llm_model: str = "claude-sonnet-5",
+) -> dict:
     """Pure computation over an already-loaded index — no I/O, easy to unit
-    test independently of the HTML it ends up rendered into."""
+    test independently of the HTML it ends up rendered into.
+
+    `sub_questions`, when given, anchors the whole page around them: every
+    indexed paper is classified as supporting/challenging/mixed/unrelated to
+    each one (same analyzer Part 2's Markdown report and Part 3's literature
+    review both use), so the visualization shows the same coverage gaps
+    those already surface — rather than being purely library-wide stats
+    with no connection to the actual research questions."""
     entries = index.entries
     total = len(entries)
 
@@ -91,6 +104,21 @@ def compute_stats(index: LibraryIndex) -> dict:
     references_fetched = any(e.references for e in entries)
     citation_network = build_citation_network(entries, coverage)
 
+    sub_questions = sub_questions or []
+    subquestion_coverage: List[dict] = []
+    if sub_questions:
+        analysis = analyze_subquestions(sub_questions, [e.paper for e in entries], use_llm=use_llm, model=llm_model)
+        for question in sub_questions:
+            grouped = analysis.titles_by_stance(question)
+            subquestion_coverage.append(
+                {
+                    "question": question,
+                    "supports": grouped["supports"],
+                    "challenges": grouped["challenges"],
+                    "mixed": grouped["mixed"],
+                }
+            )
+
     stats = {
         "generated_at": _dt.datetime.now().strftime("%Y-%m-%d %H:%M"),
         "total": total,
@@ -107,6 +135,8 @@ def compute_stats(index: LibraryIndex) -> dict:
         "coverage": coverage,
         "citation_network": citation_network,
         "references_fetched": references_fetched,
+        "sub_questions": sub_questions,
+        "subquestion_coverage": subquestion_coverage,
     }
     stats["weaknesses"] = _compute_weaknesses(stats)
     return stats
@@ -205,6 +235,20 @@ def _compute_weaknesses(stats: dict) -> List[dict]:
                 "title": f"{stats['old_papers_count']} paper(s) ({old_share:.0%}) are {DEFAULT_OLD_THRESHOLD_YEARS}+ years old",
                 "detail": "Worth checking whether more recent work has superseded these findings.",
                 "items": [],
+            }
+        )
+
+    no_coverage = [
+        c["question"] for c in stats.get("subquestion_coverage", []) if not (c["supports"] or c["challenges"] or c["mixed"])
+    ]
+    if no_coverage:
+        weaknesses.append(
+            {
+                "level": "serious",
+                "title": f"{len(no_coverage)} of {len(stats['sub_questions'])} sub-question(s) have no supporting paper at all",
+                "detail": "A real gap in your library, not just a display quirk — the same thing Part 3's literature review "
+                "would flag for a follow-up search.",
+                "items": no_coverage,
             }
         )
 
@@ -406,7 +450,56 @@ table.viz-table th { color: var(--viz-text-secondary); font-weight: 600; }
 .viz-graph-legend { display: flex; gap: 16px; flex-wrap: wrap; font-size: 0.8rem; color: var(--viz-text-secondary); margin: 4px 0 12px; }
 .viz-graph-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }
 .viz-graph-info { margin-top: 12px; padding: 10px 14px; border: 1px solid var(--viz-border); border-radius: 8px; background: var(--viz-surface); font-size: 0.85rem; min-height: 20px; }
+.viz-subq-card { margin-bottom: 16px; }
+.viz-subq-question { font-weight: 600; margin: 0 0 10px; }
+.viz-subq-stance-label { font-weight: 600; font-size: 0.85rem; margin: 10px 0 2px; }
 """
+
+
+def _render_subquestion_coverage_section(stats: dict) -> str:
+    """The page's organizing anchor, when sub-questions are known: for each
+    one, how many indexed papers support/challenge/give mixed evidence on
+    it — the same supports/challenges/mixed classification Part 2's
+    Markdown report and Part 3's literature review both already compute,
+    so this view and those agree rather than being yet another independent
+    library-wide stat with no connection to the actual research questions."""
+    if not stats.get("sub_questions"):
+        return (
+            '<div class="viz-section"><p class="viz-muted">No sub-questions configured for this run — pass '
+            "<code>--sub-questions</code>, or set them once via <code>configure</code>/<code>topic-finder</code> "
+            "and re-run <code>visualize-library</code>, to anchor this page around them.</p></div>"
+        )
+
+    cards = []
+    for i, c in enumerate(stats["subquestion_coverage"], start=1):
+        counts = [
+            ("Supports", len(c["supports"]), _STATUS["good"]),
+            ("Challenges", len(c["challenges"]), _STATUS["critical"]),
+            ("Mixed", len(c["mixed"]), _STATUS["warning"]),
+        ]
+        if not any(n for _, n, _ in counts):
+            body = (
+                '<p class="viz-none">No paper in your library speaks directly to this sub-question — '
+                "a gap worth targeting with a follow-up search.</p>"
+            )
+        else:
+            body = _bar_chart_svg([row for row in counts if row[1] > 0], width=560, label_width=140)
+            for label, key in (("Supports", "supports"), ("Challenges", "challenges"), ("Mixed evidence", "mixed")):
+                titles = c[key]
+                if not titles:
+                    continue
+                shown = titles[:6]
+                items = "".join(f"<li>{_esc(t)}</li>" for t in shown)
+                rest = len(titles) - len(shown)
+                more = f'<li class="viz-muted">…and {rest} more</li>' if rest > 0 else ""
+                body += f'<p class="viz-subq-stance-label">{label}</p><ul class="viz-weakness-items">{items}{more}</ul>'
+        cards.append(
+            f'<div class="viz-section viz-subq-card">'
+            f'<p class="viz-subq-question">{i}. {_esc(c["question"])}</p>'
+            f"{body}"
+            "</div>"
+        )
+    return "".join(cards)
 
 
 def render_html(stats: dict) -> str:
@@ -460,6 +553,9 @@ def render_html(stats: dict) -> str:
 
         body = f"""
         <div class="viz-tiles">{tiles}</div>
+
+        <h2>Coverage by sub-question</h2>
+        {_render_subquestion_coverage_section(stats)}
 
         <h2>Where your metadata came from</h2>
         <div class="viz-section">{_bar_chart_svg(_source_rows(stats))}</div>
@@ -748,6 +844,11 @@ def _frequently_missing_table(frequently_missing: List[dict]) -> str:
     """
 
 
-def build_visualization_html(index: LibraryIndex) -> str:
+def build_visualization_html(
+    index: LibraryIndex,
+    sub_questions: Optional[List[str]] = None,
+    use_llm: bool = False,
+    llm_model: str = "claude-sonnet-5",
+) -> str:
     """Convenience entry point used by the CLI: compute + render in one call."""
-    return render_html(compute_stats(index))
+    return render_html(compute_stats(index, sub_questions=sub_questions, use_llm=use_llm, llm_model=llm_model))

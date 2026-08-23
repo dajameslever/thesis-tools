@@ -216,6 +216,14 @@ PDF, `.docx`, `.txt`, or saved HTML — and builds a verified, cited index of
 them, without ever renaming, moving, or modifying your original files unless
 you explicitly ask it to.
 
+Relevance scoring and sub-question stance classification use whichever
+text is actually available: a paper's abstract when it has one, otherwise
+the text extracted from the file itself. Most locally-indexed PDFs have no
+machine-readable abstract field at all (extraction grabs raw page text,
+not a parsed abstract), so this matters — without it, every such paper
+would score near-zero relevance and read as "unrelated" to every
+sub-question regardless of what it actually says.
+
 ### Usage
 
 Interactive:
@@ -275,8 +283,18 @@ python -m thesis_tools visualize-library
 
 Renders a single self-contained HTML file (`library/visualization.html` by
 default — open it straight in a browser, no server needed) from the index
-`index-library` already built:
+`index-library` already built. It automatically reuses whatever
+sub-questions Part 1/`configure` already saved (pass `--sub-questions` to
+override, and `--llm-summaries` to classify with Claude instead of the
+heuristic):
 
+- **Coverage by sub-question** — the page's anchor, shown first: for each
+  sub-question, how many indexed papers support it, challenge it, or give
+  mixed evidence — the same classification Part 2's Markdown report and
+  Part 3's literature review both already compute, so all three agree. A
+  sub-question with zero supporting papers is called out explicitly (and
+  flagged below in "Weaknesses") rather than the page just being
+  library-wide stats with no connection to your actual research questions.
 - **Where your metadata came from** — a bar chart of how many papers were
   verified via each source (Crossref, Semantic Scholar, OpenAlex, arXiv) vs.
   resolved from local file metadata alone.

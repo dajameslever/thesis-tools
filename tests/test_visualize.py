@@ -250,3 +250,68 @@ def test_citation_network_gap_node_gets_search_links():
     )
     html = render_html(compute_stats(index))
     assert "scholar.google.com/scholar?q=Missing+Work" in html
+
+
+def test_compute_stats_without_subquestions_has_empty_coverage():
+    index = LibraryIndex([_entry("a.pdf")])
+    stats = compute_stats(index)
+    assert stats["sub_questions"] == []
+    assert stats["subquestion_coverage"] == []
+
+
+def test_compute_stats_classifies_papers_per_subquestion_using_full_text():
+    question = "Does digital transformation affect sustainability targets?"
+    supporting_paper = _entry(
+        "a.pdf",
+        title="Paper A",
+        abstract=None,
+        references=[],
+    )
+    supporting_paper.paper.full_text_excerpt = (
+        "We find a significant effect of digital transformation on sustainability targets, "
+        "consistent with prior theory."
+    )
+    index = LibraryIndex([supporting_paper])
+
+    stats = compute_stats(index, sub_questions=[question], use_llm=False)
+
+    assert stats["sub_questions"] == [question]
+    coverage = stats["subquestion_coverage"][0]
+    assert coverage["question"] == question
+    assert coverage["supports"] == ["Paper A"]
+
+
+def test_compute_stats_flags_subquestion_with_no_coverage_as_weakness():
+    question = "An entirely unrelated sub-question about coffee farming economics?"
+    index = LibraryIndex([_entry("a.pdf", title="Paper A")])
+
+    stats = compute_stats(index, sub_questions=[question], use_llm=False)
+
+    levels_and_titles = [(w["level"], w["title"]) for w in stats["weaknesses"]]
+    assert any(level == "serious" and "no supporting paper" in title for level, title in levels_and_titles)
+
+
+def test_render_html_shows_prompt_when_no_subquestions_configured():
+    index = LibraryIndex([_entry("a.pdf")])
+    html = render_html(compute_stats(index))
+    assert "No sub-questions configured for this run" in html
+
+
+def test_render_html_shows_question_text_and_gap_message():
+    question = "An entirely unrelated sub-question about coffee farming economics?"
+    index = LibraryIndex([_entry("a.pdf", title="Paper A")])
+    html = render_html(compute_stats(index, sub_questions=[question], use_llm=False))
+    assert question in html
+    assert "No paper in your library speaks directly to this sub-question" in html
+
+
+def test_build_visualization_html_anchors_on_subquestions_end_to_end():
+    question = "Does X affect Y?"
+    paper_entry = _entry("a.pdf", title="Relevant Paper", abstract=None)
+    paper_entry.paper.full_text_excerpt = "We find a significant effect of X on Y, consistent with prior theory."
+    index = LibraryIndex([paper_entry])
+
+    html = build_visualization_html(index, sub_questions=[question])
+
+    assert question in html
+    assert "Relevant Paper" in html

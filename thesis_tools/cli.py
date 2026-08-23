@@ -410,6 +410,15 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     vl.add_argument("--index-path", default="library/index.json", help="Path to the index built by index-library (default: library/index.json)")
     vl.add_argument("-o", "--output", dest="output_path", default="library/visualization.html", help="Where to write the HTML page (default: library/visualization.html)")
+    vl.add_argument(
+        "--sub-questions",
+        default=None,
+        help="Semicolon-separated sub-questions to anchor the visualization around (default: whatever Part 1 already used). "
+        "Each indexed paper is classified as supporting/challenging/mixed/unrelated to each one.",
+    )
+    vl.add_argument("--llm-summaries", action="store_true", help="Use Claude for stance classification against the sub-questions (needs ANTHROPIC_API_KEY; default: heuristic)")
+    vl.add_argument("--llm-model", default=None, help="Model to use for --llm-summaries")
+    vl.add_argument("--project-file", default=DEFAULT_PROJECT_PATH, help=f"Where shared project state lives (default: {DEFAULT_PROJECT_PATH}) — read to reuse Part 1's sub-questions/Claude settings automatically")
 
     lr = subparsers.add_parser("literature-review", help="Part 3: draft a literature review structured around your sub-questions, from what Part 1/2 already found")
     lr.add_argument("--field", help="Your field/discipline (default: whatever Part 1 already used)")
@@ -630,8 +639,17 @@ def _run_visualize_library_command(args: argparse.Namespace) -> int:
         print(f"error: no index found at {index_path} — run `index-library` first", file=sys.stderr)
         return 2
 
+    project = ProjectState.load(args.project_file)
+    sub_questions = _split_semicolons(args.sub_questions) or list(project.sub_questions)
+    use_llm = args.llm_summaries or project.use_llm
+    llm_model = args.llm_model or project.llm_model or "claude-sonnet-5"
+    if use_llm:
+        issue = llm.availability_issue()
+        if issue:
+            print(f"Claude requested but unavailable ({issue}) — using heuristic stance classification for this run.", file=sys.stderr)
+
     index = LibraryIndex.load(index_path)
-    html = build_visualization_html(index)
+    html = build_visualization_html(index, sub_questions=sub_questions, use_llm=use_llm, llm_model=llm_model)
 
     output_path = Path(args.output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
