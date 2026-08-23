@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import argparse
+import getpass
 import os
 import sys
 from pathlib import Path
 from typing import Optional
 
+from . import env as _env
 from .citations import STYLES
 from .library.library_indexer import LibraryIndexerInputs, run_library_indexer
 from .literature_review import LiteratureReviewInputs, run_literature_review
@@ -22,10 +24,12 @@ def _prompt(question: str, default: Optional[str] = None, required: bool = False
     while True:
         answer = input(f"{question}{suffix}: ").strip()
         if not answer and default is not None:
+            print()
             return default
         if not answer and required:
             print("  (this one's required — please enter something)")
             continue
+        print()
         return answer
 
 
@@ -69,7 +73,34 @@ def _default_use_llm(project: ProjectState) -> bool:
     (an API key is present) or a prior run already opted in — Claude
     suggesting sub-questions is the intended default experience, not an
     opt-in most people have to discover."""
+    _env.load_dotenv_once()
     return bool(os.environ.get("ANTHROPIC_API_KEY")) or project.use_llm
+
+
+def _ensure_anthropic_key_interactive() -> bool:
+    """If the user wants Claude's help but no key is anywhere to be found,
+    offer to collect one right now instead of silently degrading to
+    heuristics for the whole run. Returns True iff a key ends up available.
+
+    The key is kept in-memory for this process; saving it to disk is a
+    separate, explicit opt-in (to a local .env, which is gitignored — never
+    to the shared project file, which is meant to be inspected/shared)."""
+    _env.load_dotenv_once()
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        return True
+
+    print("No ANTHROPIC_API_KEY found (checked the environment and a local .env file).")
+    key = getpass.getpass("Paste your Anthropic API key to use it for this run (input hidden, or press Enter to skip): ").strip()
+    print()
+    if not key:
+        print("Skipping — continuing without Claude for this run.\n")
+        return False
+
+    os.environ["ANTHROPIC_API_KEY"] = key
+    if _prompt("Save this key to a local .env file (gitignored, never sent anywhere) so you don't paste it again? (Y/n)", default="y").lower().startswith("y"):
+        _env.save_to_dotenv("ANTHROPIC_API_KEY", key)
+        print("Saved to .env — future runs will pick it up automatically.\n")
+    return True
 
 
 def _interactive_topic_finder_inputs(project: ProjectState) -> TopicFinderInputs:
@@ -90,6 +121,8 @@ def _interactive_topic_finder_inputs(project: ProjectState) -> TopicFinderInputs
         + ("(Y/n)" if default_use_llm else "(y/N)"),
         default="y" if default_use_llm else "n",
     ).lower().startswith("y")
+    if use_llm:
+        use_llm = _ensure_anthropic_key_interactive()
 
     sub_questions = list(project.sub_questions)
     if not sub_questions:
@@ -131,6 +164,8 @@ def _interactive_library_indexer_inputs(project: ProjectState) -> LibraryIndexer
         sub_questions = list(project.sub_questions) or None
         style = project.style or "apa"
         use_llm = project.use_llm
+        if use_llm:
+            use_llm = _ensure_anthropic_key_interactive()
     else:
         style = _prompt_style()
         research_question = _prompt(
@@ -143,6 +178,8 @@ def _interactive_library_indexer_inputs(project: ProjectState) -> LibraryIndexer
             + ("(Y/n)" if default_use_llm else "(y/N)"),
             default="y" if default_use_llm else "n",
         ).lower().startswith("y")
+        if use_llm:
+            use_llm = _ensure_anthropic_key_interactive()
         sub_questions_raw = _prompt("Sub-questions to check papers against? (semicolon-separated, optional, 3-4 recommended)")
         sub_questions = _split_semicolons(sub_questions_raw)
 
@@ -590,6 +627,8 @@ def _run_configure_command(args: argparse.Namespace) -> int:
                 + ("(Y/n)" if default_use_llm else "(y/N)"),
                 default="y" if default_use_llm else "n",
             ).lower().startswith("y")
+            if use_llm_choice:
+                use_llm_choice = _ensure_anthropic_key_interactive()
 
         project = project.updated(
             field=field or None,

@@ -12,6 +12,8 @@ import os
 import sys
 from typing import Optional
 
+from . import env as _env
+
 
 def get_client(quiet: bool = False):
     """Return an `anthropic.Anthropic` client, or None if unavailable.
@@ -19,6 +21,7 @@ def get_client(quiet: bool = False):
     Prints a one-line reason to stderr (unless quiet=True) so individual
     callers don't need to duplicate that messaging.
     """
+    _env.load_dotenv_once()  # picks up a local .env's ANTHROPIC_API_KEY, if any
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
         if not quiet:

@@ -79,6 +79,12 @@ anthropic` and set `ANTHROPIC_API_KEY`. When a key is present, every
 interactive prompt defaults to "yes, use Claude" — you don't have to
 remember to opt in.
 
+You don't have to set the environment variable yourself: if you answer "yes"
+to using Claude in an interactive prompt and no key is found, the tool asks
+for it right there (input hidden) and offers to remember it in a local
+`.env` file for next time — `.env` is git-ignored, and the key is never
+written into the shared `thesis_tools_project.json`.
+
 ## Part 1: Topic Finder
 
 ### Usage
@@ -281,6 +287,7 @@ thesis_tools/
   recency.py          "How old is this, relative to now and its peers?"
   links.py            Google Scholar / ScienceDirect deep-search link builders
   llm.py              Shared optional Claude client (used across all three parts)
+  env.py              Minimal .env support for ANTHROPIC_API_KEY (git-ignored, not the shared project file)
   summarize.py        Extractive (default) or Claude-powered abstract summaries
   subquestions.py     Sub-question generation + supports/challenges/mixed stance analysis
   citations.py        APA / MLA / Chicago / Harvard / IEEE formatting
