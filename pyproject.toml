@@ -12,6 +12,10 @@ dependencies = [
     "requests>=2.28",
     "pypdf>=4.0",
     "python-docx>=1.0",
+    # urllib3 2.x prints a NotOpenSSLWarning on every run under a Python built
+    # against LibreSSL instead of OpenSSL (common on macOS system/Homebrew
+    # Python). urllib3 1.x has no such check and works identically here.
+    "urllib3<2",
 ]
 
 [project.optional-dependencies]

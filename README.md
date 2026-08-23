@@ -73,6 +73,11 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
+(`requirements.txt` pins `urllib3<2` — on a Python built against LibreSSL
+instead of OpenSSL, which is common for macOS system/Homebrew Python, `urllib3`
+2.x prints a `NotOpenSSLWarning` on every run; 1.x has no such check and works
+identically here.)
+
 For Claude-drafted summaries, sub-question suggestions, stance analysis, and
 literature-review prose instead of the built-in heuristics: `pip install
 anthropic` and set `ANTHROPIC_API_KEY`. When a key is present, every

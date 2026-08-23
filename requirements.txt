@@ -1,3 +1,8 @@
 requests>=2.28
 pypdf>=4.0
 python-docx>=1.0
+# urllib3 2.x refuses to fully trust a Python built against LibreSSL instead
+# of OpenSSL (common on macOS system/Homebrew Python) and prints a
+# NotOpenSSLWarning on every run. urllib3 1.x has no such check and works
+# identically here — pinned to avoid the warning rather than suppress it.
+urllib3<2
