@@ -287,10 +287,20 @@ originals) renamed to a clean `Author_Year_Title.ext` scheme.
 
 Progress prints as it goes, not just a summary at the end: a `[3/22]`
 counter and filename before each file starts, then what happened to it —
-verified via DOI/title match or left unresolved, how many references were
-fetched (with `--fetch-references`), and where its extracted text was
-saved — so a long run over a big folder shows what it's actually doing
-rather than sitting silent.
+how many candidate DOIs were found and each one being resolved, a title
+search if no DOI panned out, the final outcome (verified via DOI/title
+match or left unresolved), how many references were fetched (with
+`--fetch-references`), and where its extracted text was saved — so a long
+run over a big folder shows what it's actually doing rather than sitting
+silent, and a slow file shows exactly which network call it's waiting on.
+
+DOI discovery only searches roughly the first page of a file's extracted
+text, not the whole document — a paper's own DOI is always printed there,
+while its bibliography (now that extraction keeps the whole document, see
+above) can contain dozens of *other* papers' DOIs. Searching the whole
+thing would mean several real network round-trips per file trying each one
+in turn — noticeably slow — and risks resolving a citation instead of the
+paper itself.
 
 Run `python -m thesis_tools index-library --help` for all options.
 

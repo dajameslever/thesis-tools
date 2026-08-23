@@ -30,6 +30,20 @@ def test_identify_document_resolves_via_doi():
     semantic_scholar.lookup_doi.assert_not_called()  # crossref succeeded first, no need to fall back
 
 
+def test_identify_document_prints_debug_progress_for_doi_resolution(capsys):
+    crossref = MagicMock()
+    crossref.lookup_doi.return_value = Paper(title="Canonical Title", doi="10.1234/x", year=2020)
+    semantic_scholar = MagicMock()
+
+    doc = _doc(text="See https://doi.org/10.1234/x for details.")
+    identify_document(doc, "fallback title", crossref_client=crossref, semantic_scholar_client=semantic_scholar)
+
+    err = capsys.readouterr().err
+    assert "found 1 candidate DOI" in err
+    assert "resolving 10.1234/x against Crossref" in err
+    assert "resolved via DOI 10.1234/x" in err
+
+
 def test_identify_document_falls_back_to_semantic_scholar_doi_lookup():
     crossref = MagicMock()
     crossref.lookup_doi.return_value = None
@@ -125,6 +139,29 @@ def test_find_dois_extracts_and_strips_trailing_punctuation():
 def test_find_dois_deduplicates_and_caps_results():
     text = " ".join(["10.1000/a"] * 3 + ["10.1000/b", "10.1000/c"])
     assert find_dois(text, max_results=2) == ["10.1000/a", "10.1000/b"]
+
+
+def test_find_dois_ignores_dois_deep_in_a_bibliography():
+    """Regression: extract.py now keeps the whole document, bibliography
+    included, and a reference list is often packed with other papers'
+    DOIs. find_dois() must not pick those up — it's meant to find this
+    document's OWN DOI, which is always near the start, not searchable
+    correctness (or performance: several unrelated DOIs each mean a real
+    network round-trip in identify_document())."""
+    own_doi = "10.1000/own-paper-doi"
+    padding = "Introduction and body text. " * 500  # pushes the bibliography well past the search window
+    bibliography = " ".join(f"10.1000/cited-work-{i}" for i in range(20))
+    text = f"Title Page. DOI: {own_doi}\n\n{padding}\n\nReferences\n{bibliography}"
+
+    dois = find_dois(text)
+
+    assert dois == [own_doi]
+
+
+def test_find_dois_search_window_is_configurable():
+    text = "x" * 100 + " 10.1000/late-doi"
+    assert find_dois(text, search_window_chars=50) == []
+    assert find_dois(text, search_window_chars=200) == ["10.1000/late-doi"]
 
 
 def test_guess_year_picks_most_common():

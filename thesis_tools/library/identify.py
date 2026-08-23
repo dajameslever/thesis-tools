@@ -14,6 +14,7 @@ Strategy, in order:
 from __future__ import annotations
 
 import re
+import sys
 from collections import Counter
 from dataclasses import dataclass, field
 from typing import List, Optional
@@ -31,6 +32,17 @@ _GENERIC_TITLE_RE = re.compile(r"^(microsoft word|untitled|document\d*|draft\d*)
 
 TITLE_MATCH_THRESHOLD = 0.85
 
+# A paper's own DOI is essentially always printed on its title page (header,
+# footer, or a "https://doi.org/..." line near the top) — never mined from
+# deep in the body. extract.py now keeps the WHOLE document, bibliography
+# included, and a reference list is often packed with other papers' DOIs.
+# Searching the whole text would (a) very often pick up a citation's DOI
+# instead of the paper's own, and (b) mean identify_document() below tries
+# several of them in turn, each a real network round-trip — several minutes
+# of stall for one file. Restricting the search window to roughly the first
+# page keeps this fast and (more importantly) actually correct.
+_DOI_SEARCH_WINDOW_CHARS = 3000
+
 
 @dataclass
 class IdentifiedPaper:
@@ -43,9 +55,14 @@ class IdentifiedPaper:
     references: List[dict] = field(default_factory=list)
 
 
-def find_dois(text: str, max_results: int = 5) -> List[str]:
+def find_dois(text: str, max_results: int = 5, search_window_chars: int = _DOI_SEARCH_WINDOW_CHARS) -> List[str]:
+    """DOI candidates likely to be the document's OWN identifier — restricted
+    to a leading window of the text (see _DOI_SEARCH_WINDOW_CHARS) rather
+    than the whole document, so a long bibliography full of other papers'
+    DOIs doesn't get searched at all."""
     candidates: List[str] = []
-    for m in _DOI_RE.finditer(text or ""):
+    window = (text or "")[:search_window_chars]
+    for m in _DOI_RE.finditer(window):
         doi = m.group(0).rstrip(_TRAILING_PUNCT)
         if doi and doi not in candidates:
             candidates.append(doi)
@@ -110,14 +127,26 @@ def identify_document(
     semantic_scholar = semantic_scholar_client or SemanticScholarClient()
 
     # 1. DOI-based lookup — most reliable when it works.
-    for doi in find_dois(doc.text):
-        paper = crossref.lookup_doi(doi) or semantic_scholar.lookup_doi(doi)
+    doi_candidates = find_dois(doc.text)
+    if doi_candidates:
+        print(f"    found {len(doi_candidates)} candidate DOI(s) near the start of the document: {', '.join(doi_candidates)}", file=sys.stderr)
+    for i, doi in enumerate(doi_candidates, start=1):
+        print(f"    [{i}/{len(doi_candidates)}] resolving {doi} against Crossref...", file=sys.stderr)
+        paper = crossref.lookup_doi(doi)
+        if paper is None:
+            print(f"    [{i}/{len(doi_candidates)}] not on Crossref, trying Semantic Scholar...", file=sys.stderr)
+            paper = semantic_scholar.lookup_doi(doi)
         if paper is not None:
-            references = _reference_dicts(semantic_scholar.lookup_references(doi)) if fetch_references else []
+            print(f"    -> resolved via DOI {doi}", file=sys.stderr)
+            references = []
+            if fetch_references:
+                print("    fetching this paper's own reference list from Semantic Scholar...", file=sys.stderr)
+                references = _reference_dicts(semantic_scholar.lookup_references(doi))
             return IdentifiedPaper(paper=paper, confidence="verified-doi", matched_doi=doi, references=references)
 
     # 2. Heuristic title, confirmed via a title search.
     heuristic_title = clean_title_hint(doc.title_hint) or guess_title_from_text(doc.text) or filename_fallback
+    print(f"    no DOI resolved — searching by title: \"{heuristic_title}\"...", file=sys.stderr)
 
     candidates: List[Paper] = []
     for client in (crossref, semantic_scholar):
