@@ -11,11 +11,10 @@ Two modes:
 
 from __future__ import annotations
 
-import os
 import re
-import sys
 from typing import List, Optional
 
+from . import llm
 from .relevance import tokenize  # reuse the same simple tokenizer
 
 _SENTENCE_RE = re.compile(r"(?<=[.!?])\s+")
@@ -56,37 +55,11 @@ _LLM_SYSTEM_PROMPT = (
 def llm_summary(abstract: Optional[str], title: str, query_text: str, model: str = "claude-sonnet-5") -> Optional[str]:
     if not abstract:
         return None
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if not api_key:
-        print("  [llm-summaries] ANTHROPIC_API_KEY not set, falling back to extractive summaries", file=sys.stderr)
+    client = llm.get_client()
+    if client is None:
         return None
-    try:
-        import anthropic
-    except ImportError:
-        print("  [llm-summaries] `anthropic` package not installed (pip install anthropic), falling back", file=sys.stderr)
-        return None
-
-    try:
-        client = anthropic.Anthropic(api_key=api_key)
-        message = client.messages.create(
-            model=model,
-            max_tokens=150,
-            system=_LLM_SYSTEM_PROMPT,
-            messages=[
-                {
-                    "role": "user",
-                    "content": (
-                        f"Student's proposed thesis topic: {query_text}\n\n"
-                        f"Paper title: {title}\n"
-                        f"Abstract: {abstract}"
-                    ),
-                }
-            ],
-        )
-        return "".join(block.text for block in message.content if getattr(block, "type", None) == "text").strip() or None
-    except Exception as exc:
-        print(f"  [llm-summaries] request failed ({exc}), falling back to extractive", file=sys.stderr)
-        return None
+    user_message = f"Student's proposed thesis topic: {query_text}\n\nPaper title: {title}\nAbstract: {abstract}"
+    return llm.ask(client, _LLM_SYSTEM_PROMPT, user_message, model=model, max_tokens=150)
 
 
 def summarize(abstract: Optional[str], title: str, query_text: str, use_llm: bool = False, model: str = "claude-sonnet-5") -> Optional[str]:

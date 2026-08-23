@@ -79,3 +79,48 @@ def test_run_topic_finder_rejects_unknown_source(tmp_path):
     inputs = TopicFinderInputs(field="X", working_title="Y", sources=["not-a-real-source"], output_path=str(tmp_path / "r.md"))
     with pytest.raises(ValueError):
         run_topic_finder(inputs)
+
+
+@patch("thesis_tools.sources.crossref.CrossrefClient.search")
+@patch("thesis_tools.sources.arxiv.ArxivClient.search")
+@patch("thesis_tools.sources.openalex.OpenAlexClient.search")
+@patch("thesis_tools.sources.semantic_scholar.SemanticScholarClient.search")
+def test_run_topic_finder_writes_reusable_cache(mock_ss, mock_oa, mock_arxiv, mock_crossref, tmp_path):
+    mock_ss.return_value = [
+        Paper(title="Sleep Deprivation and Adolescent Decision-Making", year=2018, abstract="Studies impairment.", doi="10.1/existing")
+    ]
+    mock_oa.return_value = mock_arxiv.return_value = mock_crossref.return_value = []
+
+    output_path = tmp_path / "report.md"
+    inputs = TopicFinderInputs(field="Psychology", working_title="Sleep and Decision-Making", output_path=str(output_path))
+    run_topic_finder(inputs)
+
+    cache_path = tmp_path / "report.md.papers.json"
+    assert cache_path.is_file()
+
+    # Reanalyzing must not touch the network at all.
+    mock_ss.reset_mock()
+    reanalyze_output = tmp_path / "report2.md"
+    reanalyze_inputs = TopicFinderInputs(
+        field="Psychology",
+        working_title="Sleep and Decision-Making",
+        output_path=str(reanalyze_output),
+        reanalyze_from=str(cache_path),
+        sub_questions=["Does sleep deprivation impair decision-making?"],
+    )
+    run_topic_finder(reanalyze_inputs)
+
+    mock_ss.assert_not_called()
+    text = reanalyze_output.read_text()
+    assert "Sleep Deprivation and Adolescent Decision-Making" in text
+    assert "Does sleep deprivation impair decision-making?" in text
+
+
+def test_run_topic_finder_reanalyze_missing_cache_raises(tmp_path):
+    import pytest
+
+    inputs = TopicFinderInputs(
+        field="X", working_title="Y", output_path=str(tmp_path / "r.md"), reanalyze_from=str(tmp_path / "missing.json")
+    )
+    with pytest.raises(ValueError):
+        run_topic_finder(inputs)

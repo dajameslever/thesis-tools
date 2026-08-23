@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import re
 import sys
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import List, Optional
 
@@ -13,6 +14,8 @@ from .dedupe import dedupe_papers
 from .relevance import keywords_from_text, score_relevance, title_similarity
 from .report import ScoredPaper, build_report
 from .sources import ALL_SOURCES
+from .sources.base import Paper
+from .subquestions import analyze_subquestions, generate_subquestions
 from .summarize import summarize
 
 DEFAULT_SOURCES = list(ALL_SOURCES.keys())
@@ -33,6 +36,13 @@ class TopicFinderInputs:
     llm_model: str = "claude-sonnet-5"
     contact_email: Optional[str] = None
     output_path: Optional[str] = None
+    sub_questions: Optional[List[str]] = None
+    auto_subquestions: bool = True
+    # Path to a previous run's <report>.papers.json cache. When set, skips the
+    # search entirely and re-scores/re-summarizes/re-analyzes the same papers
+    # against (possibly changed) sub_questions/style/etc — so editing your
+    # sub-questions doesn't mean re-hitting the search APIs from scratch.
+    reanalyze_from: Optional[str] = None
 
 
 def _slugify(text: str) -> str:
@@ -49,36 +59,59 @@ def _build_query_text(inputs: TopicFinderInputs) -> str:
     return ". ".join(p for p in parts if p)
 
 
+def _cache_path_for(output_path: Path) -> Path:
+    return Path(str(output_path) + ".papers.json")
+
+
+def _load_cache(path: Path) -> tuple:
+    if not path.is_file():
+        raise ValueError(f"Reanalyze cache not found: {path}")
+    data = json.loads(path.read_text(encoding="utf-8"))
+    papers = [Paper(**p) for p in data.get("papers", [])]
+    sources_used = data.get("sources_used", [])
+    return papers, sources_used
+
+
+def _save_cache(path: Path, papers: List[Paper], sources_used: List[str]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {"sources_used": sources_used, "papers": [asdict(p) for p in papers]}
+    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
 def run_topic_finder(inputs: TopicFinderInputs) -> str:
     """Run the full pipeline and return the path to the written report."""
     if inputs.style.lower() not in STYLES:
         raise ValueError(f"Unknown citation style '{inputs.style}'. Choose from: {', '.join(STYLES)}")
 
-    sources_to_use = inputs.sources or DEFAULT_SOURCES
-    unknown = [s for s in sources_to_use if s not in ALL_SOURCES]
-    if unknown:
-        raise ValueError(f"Unknown source(s): {', '.join(unknown)}. Available: {', '.join(ALL_SOURCES)}")
-
     query_text = _build_query_text(inputs)
     keywords = keywords_from_text(query_text)
-    search_query = " ".join(keywords) if keywords else query_text
 
-    print(f"Searching {len(sources_to_use)} source(s) for: {search_query!r}", file=sys.stderr)
+    if inputs.reanalyze_from:
+        deduped, sources_to_use = _load_cache(Path(inputs.reanalyze_from))
+        print(f"Reanalyzing {len(deduped)} cached paper(s) — no new search, sub-questions/style can change freely.", file=sys.stderr)
+    else:
+        sources_to_use = inputs.sources or DEFAULT_SOURCES
+        unknown = [s for s in sources_to_use if s not in ALL_SOURCES]
+        if unknown:
+            raise ValueError(f"Unknown source(s): {', '.join(unknown)}. Available: {', '.join(ALL_SOURCES)}")
 
-    all_papers = []
-    for source_name in sources_to_use:
-        client_cls = ALL_SOURCES[source_name]
-        if source_name in ("openalex", "crossref"):
-            client = client_cls(mailto=inputs.contact_email) if inputs.contact_email else client_cls()
-        else:
-            client = client_cls()
-        print(f"  querying {source_name}...", file=sys.stderr)
-        found = client.search(search_query, limit=inputs.limit_per_source)
-        print(f"    -> {len(found)} result(s)", file=sys.stderr)
-        all_papers.extend(found)
+        search_query = " ".join(keywords) if keywords else query_text
+        print(f"Searching {len(sources_to_use)} source(s) for: {search_query!r}", file=sys.stderr)
 
-    deduped = dedupe_papers(all_papers)
-    print(f"{len(all_papers)} raw results -> {len(deduped)} after de-duplication", file=sys.stderr)
+        all_papers = []
+        for source_name in sources_to_use:
+            client_cls = ALL_SOURCES[source_name]
+            if source_name in ("openalex", "crossref"):
+                client = client_cls(mailto=inputs.contact_email) if inputs.contact_email else client_cls()
+            else:
+                client = client_cls()
+            print(f"  querying {source_name}...", file=sys.stderr)
+            found = client.search(search_query, limit=inputs.limit_per_source)
+            print(f"    -> {len(found)} result(s)", file=sys.stderr)
+            all_papers.extend(found)
+
+        deduped = dedupe_papers(all_papers)
+        print(f"{len(all_papers)} raw results -> {len(deduped)} after de-duplication", file=sys.stderr)
 
     scored: List[ScoredPaper] = []
     for paper in deduped:
@@ -94,6 +127,21 @@ def run_topic_finder(inputs: TopicFinderInputs) -> str:
     scored.sort(key=lambda sp: (sp.title_similarity, sp.relevance), reverse=True)
     top = scored[: inputs.top_n]
 
+    sub_questions = list(inputs.sub_questions) if inputs.sub_questions else []
+    if not sub_questions and inputs.auto_subquestions and inputs.use_llm_summaries:
+        print("Generating sub-questions with Claude...", file=sys.stderr)
+        sub_questions = generate_subquestions(query_text, model=inputs.llm_model)
+
+    subquestion_analysis = None
+    if sub_questions:
+        print(f"Analyzing {len(top)} paper(s) against {len(sub_questions)} sub-question(s)...", file=sys.stderr)
+        subquestion_analysis = analyze_subquestions(
+            sub_questions,
+            [sp.paper for sp in top],
+            use_llm=inputs.use_llm_summaries,
+            model=inputs.llm_model,
+        )
+
     report_text = build_report(
         field=inputs.field,
         working_title=inputs.working_title,
@@ -103,11 +151,20 @@ def run_topic_finder(inputs: TopicFinderInputs) -> str:
         scored_papers=top,
         sources_used=sources_to_use,
         total_found=len(deduped),
+        subquestion_analysis=subquestion_analysis,
     )
 
     output_path = Path(inputs.output_path) if inputs.output_path else _default_output_path(inputs.working_title)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(report_text, encoding="utf-8")
+
+    cache_path = _cache_path_for(output_path)
+    _save_cache(cache_path, deduped, sources_to_use)
+    print(
+        f"Saved {len(deduped)} paper(s) to {cache_path} — change --sub-questions/--style and pass "
+        f"--reanalyze {cache_path} to update the report without re-searching.",
+        file=sys.stderr,
+    )
 
     return str(output_path)
 

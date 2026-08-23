@@ -97,28 +97,36 @@ def _year(paper: Paper) -> str:
     return str(paper.year) if paper.year else "n.d."
 
 
+def _vol_issue(paper: Paper) -> str:
+    vol_issue = paper.volume or ""
+    if paper.issue:
+        vol_issue += f"({paper.issue})"
+    return vol_issue
+
+
 def format_apa(paper: Paper) -> str:
     authors = _join_authors_apa_harvard(paper.authors, _apa_author)
     year = _year(paper)
     title = paper.title.rstrip(".")
-    venue = f" {paper.venue}," if paper.venue else ""
-    vol = f" {paper.volume}" if paper.volume else ""
-    issue = f"({paper.issue})" if paper.issue else ""
-    pages = f", {paper.pages}" if paper.pages else ""
-    doi = f" https://doi.org/{paper.doi}" if paper.doi else (f" {paper.url}" if paper.url else "")
-    return f"{authors} ({year}). {title}.{venue}{vol}{issue}{pages}.{doi}".strip()
+
+    parts = [p for p in [paper.venue, _vol_issue(paper), paper.pages] if p]
+    tail = f" {', '.join(parts)}." if parts else ""
+
+    link = f" https://doi.org/{paper.doi}" if paper.doi else (f" {paper.url}" if paper.url else "")
+    return f"{authors} ({year}). {title}.{tail}{link}".strip()
 
 
 def format_harvard(paper: Paper) -> str:
     authors = _join_authors_apa_harvard(paper.authors, _harvard_author)
     year = _year(paper)
     title = paper.title.rstrip(".")
-    venue = f" {paper.venue}," if paper.venue else ""
-    vol = f" {paper.volume}" if paper.volume else ""
-    issue = f"({paper.issue})" if paper.issue else ""
-    pages = f", pp.{paper.pages}" if paper.pages else ""
-    doi = f" doi:{paper.doi}" if paper.doi else (f" Available at: {paper.url}" if paper.url else "")
-    return f"{authors}, {year}. {title}.{venue}{vol}{issue}{pages}.{doi}".strip()
+
+    pages = f"pp.{paper.pages}" if paper.pages else ""
+    parts = [p for p in [paper.venue, _vol_issue(paper), pages] if p]
+    tail = f" {', '.join(parts)}." if parts else ""
+
+    link = f" doi:{paper.doi}" if paper.doi else (f" Available at: {paper.url}" if paper.url else "")
+    return f"{authors}, {year}. {title}.{tail}{link}".strip()
 
 
 def format_mla(paper: Paper) -> str:

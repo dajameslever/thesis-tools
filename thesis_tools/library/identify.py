@@ -1,0 +1,131 @@
+"""Turn an ExtractedDocument into a (hopefully verified) Paper record.
+
+Strategy, in order:
+  1. Look for a DOI in the extracted text and resolve it against Crossref
+     (falling back to Semantic Scholar) — this gives fully canonical
+     metadata when it works.
+  2. Otherwise, build a best-effort title from file metadata / the text
+     itself, and try to confirm it via a title search against the same
+     two sources. A high title-similarity hit is treated as verified.
+  3. Otherwise, fall back to whatever local heuristics found — flagged
+     "unresolved" so the user knows to check it by hand.
+"""
+
+from __future__ import annotations
+
+import re
+from collections import Counter
+from dataclasses import dataclass, field
+from typing import List, Optional
+
+from ..relevance import title_similarity
+from ..sources.base import Paper
+from ..sources.crossref import CrossrefClient
+from ..sources.semantic_scholar import SemanticScholarClient
+from .extract import ExtractedDocument
+
+_DOI_RE = re.compile(r"10\.\d{4,9}/[^\s\"'<>]+")
+_YEAR_RE = re.compile(r"\b(?:19|20)\d{2}\b")
+_TRAILING_PUNCT = ").,;:]}>”’\""
+_GENERIC_TITLE_RE = re.compile(r"^(microsoft word|untitled|document\d*|draft\d*)\b", re.I)
+
+TITLE_MATCH_THRESHOLD = 0.85
+
+
+@dataclass
+class IdentifiedPaper:
+    paper: Paper
+    confidence: str  # "verified-doi" | "verified-title-match" | "unresolved"
+    matched_doi: Optional[str] = None
+    # Lightweight {"doi", "title", "year"} records for papers *this* paper
+    # cites — used for the citation-coverage view. Only populated when a DOI
+    # was resolved and fetch_references=True was requested.
+    references: List[dict] = field(default_factory=list)
+
+
+def find_dois(text: str, max_results: int = 5) -> List[str]:
+    candidates: List[str] = []
+    for m in _DOI_RE.finditer(text or ""):
+        doi = m.group(0).rstrip(_TRAILING_PUNCT)
+        if doi and doi not in candidates:
+            candidates.append(doi)
+        if len(candidates) >= max_results:
+            break
+    return candidates
+
+
+def guess_year(text: str) -> Optional[int]:
+    years = [int(y) for y in _YEAR_RE.findall(text or "")]
+    if not years:
+        return None
+    return Counter(years).most_common(1)[0][0]
+
+
+def clean_title_hint(hint: Optional[str]) -> Optional[str]:
+    if not hint:
+        return None
+    hint = hint.strip()
+    if not hint or _GENERIC_TITLE_RE.match(hint):
+        return None
+    return hint
+
+
+def guess_title_from_text(text: str) -> Optional[str]:
+    for line in (text or "").splitlines():
+        line = line.strip()
+        if 15 <= len(line) <= 220 and not line.isupper():
+            return line
+    return None
+
+
+def _reference_dicts(papers: List[Paper]) -> List[dict]:
+    return [{"doi": p.doi, "title": p.title, "year": p.year} for p in papers if p.title]
+
+
+def identify_document(
+    doc: ExtractedDocument,
+    filename_fallback: str,
+    contact_email: Optional[str] = None,
+    fetch_references: bool = False,
+    crossref_client: Optional[CrossrefClient] = None,
+    semantic_scholar_client: Optional[SemanticScholarClient] = None,
+) -> IdentifiedPaper:
+    crossref = crossref_client or CrossrefClient(mailto=contact_email)
+    semantic_scholar = semantic_scholar_client or SemanticScholarClient()
+
+    # 1. DOI-based lookup — most reliable when it works.
+    for doi in find_dois(doc.text):
+        paper = crossref.lookup_doi(doi) or semantic_scholar.lookup_doi(doi)
+        if paper is not None:
+            references = _reference_dicts(semantic_scholar.lookup_references(doi)) if fetch_references else []
+            return IdentifiedPaper(paper=paper, confidence="verified-doi", matched_doi=doi, references=references)
+
+    # 2. Heuristic title, confirmed via a title search.
+    heuristic_title = clean_title_hint(doc.title_hint) or guess_title_from_text(doc.text) or filename_fallback
+    heuristic_year = guess_year(doc.text)
+
+    candidates: List[Paper] = []
+    for client in (crossref, semantic_scholar):
+        candidates.extend(client.search(heuristic_title, limit=3))
+
+    best: Optional[Paper] = None
+    best_similarity = 0.0
+    for candidate in candidates:
+        similarity = title_similarity(heuristic_title, candidate.title)
+        if similarity > best_similarity:
+            best, best_similarity = candidate, similarity
+
+    if best is not None and best_similarity >= TITLE_MATCH_THRESHOLD:
+        references = []
+        if fetch_references and best.doi:
+            references = _reference_dicts(semantic_scholar.lookup_references(best.doi))
+        return IdentifiedPaper(paper=best, confidence="verified-title-match", matched_doi=best.doi, references=references)
+
+    # 3. Local heuristics only — needs a manual check.
+    fallback = Paper(
+        title=heuristic_title,
+        authors=[doc.author_hint] if doc.author_hint else [],
+        year=heuristic_year,
+        sources=["local-heuristic"],
+    )
+    return IdentifiedPaper(paper=fallback, confidence="unresolved")

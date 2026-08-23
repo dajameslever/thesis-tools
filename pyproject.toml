@@ -5,11 +5,13 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "thesis-tools"
 version = "0.1.0"
-description = "A local toolkit for working through a thesis, starting with topic/title selection and novelty checking."
+description = "A local toolkit for working through a thesis: topic/title selection with novelty checking, and a local library indexer for downloaded papers."
 readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [
     "requests>=2.28",
+    "pypdf>=4.0",
+    "python-docx>=1.0",
 ]
 
 [project.optional-dependencies]
@@ -20,4 +22,4 @@ dev = ["pytest>=7.0"]
 thesis-tools = "thesis_tools.cli:main"
 
 [tool.setuptools]
-packages = ["thesis_tools", "thesis_tools.sources"]
+packages = ["thesis_tools", "thesis_tools.sources", "thesis_tools.library"]

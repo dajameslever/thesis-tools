@@ -5,5 +5,7 @@ venv/
 *.egg-info/
 .pytest_cache/
 output/*.md
+output/*.papers.json
 !output/.gitkeep
+/library/
 .env

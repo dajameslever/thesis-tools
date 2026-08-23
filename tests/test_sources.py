@@ -53,6 +53,38 @@ def test_semantic_scholar_returns_empty_on_error(mock_get):
     assert results == []
 
 
+@patch("thesis_tools.sources.semantic_scholar.requests.get")
+def test_semantic_scholar_lookup_doi_returns_paper(mock_get):
+    mock_get.return_value = _mock_response(json_data={"title": "Sleep and Cognition", "year": 2021})
+    paper = SemanticScholarClient().lookup_doi("10.1/x")
+    assert paper is not None
+    assert paper.title == "Sleep and Cognition"
+
+
+@patch("thesis_tools.sources.semantic_scholar.requests.get")
+def test_semantic_scholar_lookup_doi_404_returns_none(mock_get):
+    resp = MagicMock()
+    resp.status_code = 404
+    mock_get.return_value = resp
+    assert SemanticScholarClient().lookup_doi("10.1/does-not-exist") is None
+
+
+@patch("thesis_tools.sources.semantic_scholar.requests.get")
+def test_semantic_scholar_lookup_references_unwraps_cited_paper(mock_get):
+    mock_get.return_value = _mock_response(
+        json_data={"data": [{"citedPaper": {"title": "An Older Foundational Paper", "year": 2005}}, {"citedPaper": {}}]}
+    )
+    refs = SemanticScholarClient().lookup_references("10.1/x")
+    assert len(refs) == 1
+    assert refs[0].title == "An Older Foundational Paper"
+
+
+@patch("thesis_tools.sources.semantic_scholar.requests.get")
+def test_semantic_scholar_lookup_references_returns_empty_on_error(mock_get):
+    mock_get.side_effect = Exception("timeout")
+    assert SemanticScholarClient().lookup_references("10.1/x") == []
+
+
 def test_reconstruct_abstract_from_inverted_index():
     inverted = {"An": [0], "abstract": [1], "about": [2], "sleep": [3]}
     assert reconstruct_abstract(inverted) == "An abstract about sleep"
