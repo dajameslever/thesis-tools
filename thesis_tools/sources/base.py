@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import List, Optional
 
@@ -44,6 +45,16 @@ class Paper:
 
 def normalize_title(title: str) -> str:
     return "".join(ch.lower() for ch in (title or "") if ch.isalnum() or ch.isspace()).strip()
+
+
+def slug_for_paper(paper: Paper) -> str:
+    """A filesystem-safe slug for a paper — shared so a given paper gets the
+    same filename whether it lands in `processed/` via Part 1's
+    --download-papers or Part 2's index-library, rather than each picking
+    its own scheme."""
+    base = re.sub(r"[^\w\s-]", "", paper.title or "untitled").strip().lower()
+    base = re.sub(r"[-\s]+", "-", base)[:80] or "untitled"
+    return f"{base}-{paper.year}" if paper.year else base
 
 
 class SourceClient:

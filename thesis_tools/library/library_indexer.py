@@ -11,6 +11,7 @@ from typing import Dict, Iterator, List, Optional
 from .. import llm
 from ..citations import STYLES
 from ..relevance import score_relevance
+from ..sources.base import slug_for_paper
 from ..subquestions import analyze_subquestions
 from ..summarize import summarize
 from .extract import extract_document
@@ -40,6 +41,12 @@ class LibraryIndexerInputs:
     sub_questions: Optional[List[str]] = None
     use_llm: bool = False
     llm_model: str = "claude-sonnet-5"
+    # Where each file's extracted text is also saved as a plain .txt, one per
+    # paper, so you can inspect exactly what was extracted (and confirm it's
+    # the whole document, not a prefix) without opening the JSON index. Same
+    # `processed/text/` location and naming Part 1's --download-papers uses,
+    # so both land in one place.
+    processed_dir: str = "processed"
 
 
 def _normalize_extensions(extensions: Optional[List[str]]) -> List[str]:
@@ -78,21 +85,36 @@ def run_library_indexer(inputs: LibraryIndexerInputs) -> Dict[str, object]:
     index = LibraryIndex.load(index_path)
     existing_by_hash = index.by_hash()
 
+    files = list(_iter_files(folder, inputs.recursive, extensions, organize_to))
+    print(
+        f"Found {len(files)} file(s) in {folder} matching {', '.join(extensions)}"
+        + (" (scanning subfolders too)" if inputs.recursive else ""),
+        file=sys.stderr,
+    )
+    if inputs.fetch_references:
+        print(
+            "Fetching each paper's own reference list too (--fetch-references) — this is the slow part, "
+            "one extra Semantic Scholar call per file.",
+            file=sys.stderr,
+        )
+
     new_count = skipped_count = failed_count = 0
 
-    for path in _iter_files(folder, inputs.recursive, extensions, organize_to):
+    for i, path in enumerate(files, start=1):
+        progress = f"[{i}/{len(files)}]"
         try:
             file_hash = hash_file(path)
         except Exception as exc:
-            print(f"  [index] couldn't read {path} ({exc})", file=sys.stderr)
+            print(f"{progress} couldn't read {path} ({exc}), skipping", file=sys.stderr)
             failed_count += 1
             continue
 
         if not inputs.rescan and file_hash in existing_by_hash:
+            print(f"{progress} {path.name} — unchanged since last run, skipping", file=sys.stderr)
             skipped_count += 1
             continue
 
-        print(f"Indexing {path} ...", file=sys.stderr)
+        print(f"{progress} {path.name} — extracting text...", file=sys.stderr)
         doc = extract_document(path)
         if doc is None or not (doc.text.strip() or doc.title_hint):
             print(f"  [index] no usable text/metadata in {path}, skipping", file=sys.stderr)
@@ -100,6 +122,7 @@ def run_library_indexer(inputs: LibraryIndexerInputs) -> Dict[str, object]:
             continue
 
         filename_fallback = path.stem.replace("_", " ").replace("-", " ").strip() or path.name
+        print(f"  looking up DOI/title against Crossref + Semantic Scholar...", file=sys.stderr)
         try:
             identified = identify_document(
                 doc,
@@ -120,11 +143,28 @@ def run_library_indexer(inputs: LibraryIndexerInputs) -> Dict[str, object]:
                 file=sys.stderr,
             )
             identified = local_heuristic_fallback(doc, filename_fallback)
+
+        if identified.confidence == "verified-doi":
+            print(f"  -> verified via DOI ({identified.matched_doi})", file=sys.stderr)
+        elif identified.confidence == "verified-title-match":
+            print(f'  -> verified via title match: "{identified.paper.title}"', file=sys.stderr)
+        else:
+            print("  -> unresolved — no confident DOI/title match, using local file metadata only", file=sys.stderr)
+        if inputs.fetch_references:
+            print(f"  -> {len(identified.references)} reference(s) fetched for the citation-coverage view", file=sys.stderr)
+
         # Attach the actual extracted text (not just the resolved metadata) so
         # Part 3 can quote real wording from this paper instead of just its
         # abstract — regardless of whether identification came from a DOI
         # lookup, a title match, or local heuristics.
         identified.paper.full_text_excerpt = doc.text or None
+
+        if doc.text:
+            text_dir = Path(inputs.processed_dir) / "text"
+            text_dir.mkdir(parents=True, exist_ok=True)
+            text_path = text_dir / f"{slug_for_paper(identified.paper)}.txt"
+            text_path.write_text(doc.text, encoding="utf-8")
+            print(f"  -> saved extracted text to {text_path}", file=sys.stderr)
 
         entry = LibraryEntry(
             file_path=str(path),
@@ -157,7 +197,14 @@ def run_library_indexer(inputs: LibraryIndexerInputs) -> Dict[str, object]:
         # paper's own title so the extractive summarizer still has something
         # to rank sentences against.
         summary_context = inputs.research_question or entry.paper.title
-        summary = summarize(entry.paper.abstract, entry.paper.title, summary_context, use_llm=inputs.use_llm, model=inputs.llm_model)
+        summary = summarize(
+            entry.paper.abstract,
+            entry.paper.title,
+            summary_context,
+            use_llm=inputs.use_llm,
+            model=inputs.llm_model,
+            full_text_excerpt=entry.paper.full_text_excerpt,
+        )
         if summary:
             summaries[key] = summary
         if inputs.research_question:

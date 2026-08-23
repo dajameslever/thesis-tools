@@ -28,8 +28,8 @@ def _split_sentences(text: str) -> List[str]:
     return [s.strip() for s in _SENTENCE_RE.split(text) if s.strip()]
 
 
-def extractive_summary(abstract: Optional[str], query_text: str, max_sentences: int = 2) -> Optional[str]:
-    sentences = _split_sentences(abstract or "")
+def extractive_summary(text: Optional[str], query_text: str, max_sentences: int = 2) -> Optional[str]:
+    sentences = _split_sentences(text or "")
     if not sentences:
         return None
     if len(sentences) <= max_sentences:
@@ -54,8 +54,14 @@ _LLM_SYSTEM_PROMPT = (
 )
 
 
-def llm_summary(abstract: Optional[str], title: str, query_text: str, model: str = "claude-sonnet-5") -> Optional[str]:
-    if not abstract:
+# A much longer full-text excerpt (extract.py keeps the whole document now)
+# is too much to put in every summary prompt — bound what actually goes in
+# independently of that extraction limit.
+MAX_TEXT_CHARS_FOR_SUMMARY_PROMPT = 6000
+
+
+def llm_summary(text: Optional[str], title: str, query_text: str, model: str = "claude-sonnet-5", is_abstract: bool = True) -> Optional[str]:
+    if not text:
         return None
     # quiet=True: this runs once per paper, so the caller checks
     # llm.availability_issue() up front and prints one notice instead of
@@ -63,15 +69,31 @@ def llm_summary(abstract: Optional[str], title: str, query_text: str, model: str
     client = llm.get_client(quiet=True)
     if client is None:
         return None
-    user_message = f"Student's proposed thesis topic: {query_text}\n\nPaper title: {title}\nAbstract: {abstract}"
+    label = "Abstract" if is_abstract else "Excerpt from the original document"
+    user_message = (
+        f"Student's proposed thesis topic: {query_text}\n\nPaper title: {title}\n"
+        f"{label}: {text[:MAX_TEXT_CHARS_FOR_SUMMARY_PROMPT]}"
+    )
     return llm.ask(client, _LLM_SYSTEM_PROMPT, user_message, model=model, max_tokens=150)
 
 
-def summarize(abstract: Optional[str], title: str, query_text: str, use_llm: bool = False, model: str = "claude-sonnet-5") -> Optional[str]:
-    if not abstract:
+def summarize(
+    abstract: Optional[str],
+    title: str,
+    query_text: str,
+    use_llm: bool = False,
+    model: str = "claude-sonnet-5",
+    full_text_excerpt: Optional[str] = None,
+) -> Optional[str]:
+    # Most locally-indexed PDFs have no machine-readable abstract field at
+    # all (extraction grabs raw page text, not a parsed abstract) — fall
+    # back to the extracted text rather than silently producing no summary
+    # for every such paper.
+    text = abstract or full_text_excerpt
+    if not text:
         return None
     if use_llm:
-        result = llm_summary(abstract, title, query_text, model=model)
+        result = llm_summary(text, title, query_text, model=model, is_abstract=bool(abstract))
         if result:
             return result
-    return extractive_summary(abstract, query_text)
+    return extractive_summary(text, query_text)

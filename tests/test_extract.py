@@ -69,3 +69,70 @@ def test_extract_document_handles_corrupt_file_gracefully(tmp_path):
     path = tmp_path / "broken.pdf"
     path.write_bytes(b"not actually a pdf")
     assert extract_document(path) is None
+
+
+def test_extract_pdf_keeps_all_pages_no_truncation():
+    """The old MAX_PDF_PAGES=4 cap would have dropped everything past page
+    4 — "the pdf extract needs to be the entire copy". Simulated with a
+    mocked reader since pypdf alone can't render real text into test
+    fixtures."""
+    from unittest.mock import MagicMock, patch
+
+    from thesis_tools.library.extract import extract_pdf
+
+    fake_pages = []
+    for i in range(30):
+        page = MagicMock()
+        page.extract_text.return_value = f"Real content for page {i}. " * 50
+        fake_pages.append(page)
+    fake_reader = MagicMock()
+    fake_reader.pages = fake_pages
+    fake_reader.metadata = None
+
+    with patch("pypdf.PdfReader", return_value=fake_reader):
+        doc = extract_pdf(Path("fake.pdf"))
+
+    assert "[Page 1]" in doc.text
+    assert "[Page 30]" in doc.text
+    assert len(doc.text) > 30000  # comfortably past the old 8000-char cap
+
+
+def test_extract_pdf_no_character_cap():
+    from unittest.mock import MagicMock, patch
+
+    from thesis_tools.library.extract import extract_pdf
+
+    huge_text = "word " * 20000  # ~100,000 characters on a single page
+    page = MagicMock()
+    page.extract_text.return_value = huge_text
+    fake_reader = MagicMock()
+    fake_reader.pages = [page]
+    fake_reader.metadata = None
+
+    with patch("pypdf.PdfReader", return_value=fake_reader):
+        doc = extract_pdf(Path("fake.pdf"))
+
+    assert len(doc.text) > 90000
+
+
+def test_extract_txt_not_truncated_for_large_files(tmp_path):
+    path = tmp_path / "big.txt"
+    big_content = "word " * 20000  # ~100,000 characters, well past the old 8000-char cap
+    path.write_text(big_content, encoding="utf-8")
+    doc = extract_txt(path)
+    assert len(doc.text) == len(big_content)
+
+
+def test_extract_docx_keeps_all_paragraphs(tmp_path):
+    docx = __import__("docx")
+    document = docx.Document()
+    for i in range(2000):  # past the old 1500-paragraph cap
+        document.add_paragraph(f"Paragraph number {i} about sleep deprivation.")
+    path = tmp_path / "long.docx"
+    document.save(str(path))
+
+    from thesis_tools.library.extract import extract_docx
+
+    doc = extract_docx(path)
+    assert "Paragraph number 0 " in doc.text
+    assert "Paragraph number 1999 " in doc.text

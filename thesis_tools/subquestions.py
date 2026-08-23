@@ -187,13 +187,24 @@ _STANCE_SYSTEM_PROMPT = (
 )
 
 
+# extract.py now keeps up to ~20 pages of a paper's full text (raised from a
+# much tighter cap so relevance scoring and local-only citation matching see
+# a whole paper). That's too much to send whole into every stance-
+# classification call across every sub-question and every paper — cap what
+# actually goes in the prompt here instead, independent of the extraction
+# limit.
+MAX_TEXT_CHARS_FOR_STANCE_PROMPT = 6000
+
+
 def _llm_stance_for_paper(client, paper: Paper, sub_questions: List[str], model: str) -> Optional[Dict[str, StanceResult]]:
     text = _text_for_stance(paper)
     if not text:
         return None
     numbered = "\n".join(f"{i}. {q}" for i, q in enumerate(sub_questions, start=1))
     label = "Abstract" if paper.abstract else "Excerpt from the original document"
-    user_message = f"Sub-questions:\n{numbered}\n\nPaper title: {paper.title}\n{label}: {text}"
+    user_message = (
+        f"Sub-questions:\n{numbered}\n\nPaper title: {paper.title}\n{label}: {text[:MAX_TEXT_CHARS_FOR_STANCE_PROMPT]}"
+    )
     response = llm.ask(client, _STANCE_SYSTEM_PROMPT, user_message, model=model, max_tokens=400)
     if not response:
         return None

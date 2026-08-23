@@ -11,9 +11,13 @@ from html.parser import HTMLParser
 from pathlib import Path
 from typing import Callable, Dict, Optional
 
-MAX_CHARS = 8000
-MAX_PDF_PAGES = 4
-MAX_DOCX_PARAGRAPHS = 300
+# Deliberately no length/page cap here: extraction keeps the entire document,
+# not a prefix of it. Local-only consumers (relevance scoring, citation-
+# coverage matching, indexing generally) benefit from seeing a whole paper
+# rather than losing everything past a few pages. What actually gets sent to
+# an LLM (subquestions.py's stance classification, literature_review.py's
+# synthesis prompts) applies its own, much smaller per-call truncation
+# independently — that's the right place to bound API cost, not here.
 
 
 @dataclass
@@ -39,7 +43,7 @@ def extract_pdf(path: Path) -> ExtractedDocument:
 
     reader = pypdf.PdfReader(str(path))
     chunks = []
-    for page_number, page in enumerate(reader.pages[:MAX_PDF_PAGES], start=1):
+    for page_number, page in enumerate(reader.pages, start=1):
         try:
             page_text = page.extract_text() or ""
         except Exception:
@@ -48,7 +52,7 @@ def extract_pdf(path: Path) -> ExtractedDocument:
             # A page marker lets a downstream direct quote cite a real page
             # number (e.g. for Part 3's literature review) instead of guessing.
             chunks.append(f"[Page {page_number}]\n{page_text}")
-    text = "\n\n".join(chunks)[:MAX_CHARS]
+    text = "\n\n".join(chunks)
 
     meta = reader.metadata
     title_hint = _clean_meta(getattr(meta, "title", None)) if meta else None
@@ -63,8 +67,8 @@ def extract_docx(path: Path) -> ExtractedDocument:
         raise RuntimeError("Reading .docx files requires `pip install python-docx`") from exc
 
     document = docx.Document(str(path))
-    paragraphs = [p.text for p in document.paragraphs[:MAX_DOCX_PARAGRAPHS] if p.text.strip()]
-    text = "\n".join(paragraphs)[:MAX_CHARS]
+    paragraphs = [p.text for p in document.paragraphs if p.text.strip()]
+    text = "\n".join(paragraphs)
 
     core = document.core_properties
     title_hint = _clean_meta(core.title)
@@ -73,7 +77,7 @@ def extract_docx(path: Path) -> ExtractedDocument:
 
 
 def extract_txt(path: Path) -> ExtractedDocument:
-    text = path.read_text(encoding="utf-8", errors="ignore")[:MAX_CHARS]
+    text = path.read_text(encoding="utf-8", errors="ignore")
     return ExtractedDocument(text=text, title_hint=None, author_hint=None, file_type="txt")
 
 
@@ -110,7 +114,7 @@ def extract_html(path: Path) -> ExtractedDocument:
     parser = _HtmlTextExtractor()
     parser.feed(raw)
     return ExtractedDocument(
-        text=parser.text[:MAX_CHARS],
+        text=parser.text,
         title_hint=parser.title,
         author_hint=None,
         file_type="html",

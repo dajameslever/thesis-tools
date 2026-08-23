@@ -391,6 +391,7 @@ def _build_parser() -> argparse.ArgumentParser:
     il.add_argument("--organize", action="store_true", help="Also copy (never move) indexed files into a clean Author_Year_Title structure")
     il.add_argument("--organize-to", default="library/organized", help="Destination folder for --organize (default: library/organized)")
     il.add_argument("--fetch-references", action="store_true", help="Also fetch each paper's own reference list from Semantic Scholar, to build the citation-coverage view (slower, more API calls)")
+    il.add_argument("--processed-dir", default="processed", help="Where each file's extracted text is saved as a plain .txt for inspection (default: processed) — same location Part 1's --download-papers uses")
     il.add_argument("--question", dest="research_question", default=None, help="Your research question/topic (default: whatever Part 1 already used) — scores each indexed paper's relevance and summarizes it in that context")
     il.add_argument(
         "--sub-questions",
@@ -584,6 +585,7 @@ def _run_index_library_command(args: argparse.Namespace) -> int:
             sub_questions=sub_questions or (project.sub_questions or None),
             use_llm=args.llm_summaries or project.use_llm,
             llm_model=llm_model,
+            processed_dir=args.processed_dir,
         )
     elif args.non_interactive:
         print("error: --non-interactive requires --folder", file=sys.stderr)
@@ -605,6 +607,8 @@ def _run_index_library_command(args: argparse.Namespace) -> int:
         inputs.sub_questions = sub_questions or inputs.sub_questions
         inputs.llm_model = llm_model
         inputs.use_llm = inputs.use_llm or args.llm_summaries
+        if args.processed_dir != "processed":
+            inputs.processed_dir = args.processed_dir
 
     try:
         stats = run_library_indexer(inputs)

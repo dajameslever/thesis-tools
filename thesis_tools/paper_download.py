@@ -21,7 +21,6 @@ download never aborts the run.
 
 from __future__ import annotations
 
-import re
 import sys
 from pathlib import Path
 from typing import List, Optional
@@ -29,16 +28,10 @@ from typing import List, Optional
 import requests
 
 from .library.extract import extract_pdf
-from .sources.base import Paper
+from .sources.base import Paper, slug_for_paper
 
 DOWNLOAD_TIMEOUT = 30
 MAX_PDF_BYTES = 25 * 1024 * 1024  # 25 MB — a sane cap for a single paper
-
-
-def _slug(paper: Paper) -> str:
-    base = re.sub(r"[^\w\s-]", "", paper.title or "untitled").strip().lower()
-    base = re.sub(r"[-\s]+", "-", base)[:80] or "untitled"
-    return f"{base}-{paper.year}" if paper.year else base
 
 
 def download_and_extract(paper: Paper, dest_dir: str = "processed") -> Optional[str]:
@@ -56,7 +49,7 @@ def download_and_extract(paper: Paper, dest_dir: str = "processed") -> Optional[
     pdf_dir.mkdir(parents=True, exist_ok=True)
     text_dir.mkdir(parents=True, exist_ok=True)
 
-    slug = _slug(paper)
+    slug = slug_for_paper(paper)
     pdf_path = pdf_dir / f"{slug}.pdf"
     text_path = text_dir / f"{slug}.txt"
 

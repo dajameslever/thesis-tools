@@ -167,7 +167,14 @@ def run_topic_finder(inputs: TopicFinderInputs) -> str:
         if relevance < inputs.min_relevance:
             continue
         sim = title_similarity(inputs.working_title, paper.title)
-        summary = summarize(paper.abstract, paper.title, query_text, use_llm=inputs.use_llm_summaries, model=inputs.llm_model)
+        summary = summarize(
+            paper.abstract,
+            paper.title,
+            query_text,
+            use_llm=inputs.use_llm_summaries,
+            model=inputs.llm_model,
+            full_text_excerpt=paper.full_text_excerpt,
+        )
         scored.append(ScoredPaper(paper=paper, relevance=relevance, title_similarity=sim, summary=summary))
 
     # Sort: title-similarity "danger" first (so novelty-critical hits surface even if

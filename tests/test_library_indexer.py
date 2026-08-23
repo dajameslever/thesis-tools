@@ -17,7 +17,8 @@ def _fake_identify(paper_title="Sleep and Cognition", confidence="verified-doi",
     return _identify
 
 
-def test_run_library_indexer_indexes_new_pdf(tmp_path):
+def test_run_library_indexer_indexes_new_pdf(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)  # extracted text now also gets written to ./processed/text/
     downloads = tmp_path / "downloads"
     downloads.mkdir()
     (downloads / "paper.pdf").write_bytes(b"%PDF-1.4 fake")
@@ -40,7 +41,8 @@ def test_run_library_indexer_indexes_new_pdf(tmp_path):
     assert index.entries[0].paper.title == "Sleep and Cognition"
 
 
-def test_run_library_indexer_skips_unchanged_files_on_rescan(tmp_path):
+def test_run_library_indexer_skips_unchanged_files_on_rescan(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     downloads = tmp_path / "downloads"
     downloads.mkdir()
     (downloads / "paper.pdf").write_bytes(b"%PDF-1.4 fake")
@@ -62,7 +64,8 @@ def test_run_library_indexer_skips_unchanged_files_on_rescan(tmp_path):
         assert mock_identify.call_count == 1  # not called again
 
 
-def test_run_library_indexer_rescan_forces_reextraction(tmp_path):
+def test_run_library_indexer_rescan_forces_reextraction(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     downloads = tmp_path / "downloads"
     downloads.mkdir()
     (downloads / "paper.pdf").write_bytes(b"%PDF-1.4 fake")
@@ -80,7 +83,8 @@ def test_run_library_indexer_rescan_forces_reextraction(tmp_path):
         assert mock_identify.call_count == 2
 
 
-def test_run_library_indexer_prune_removes_deleted_files(tmp_path):
+def test_run_library_indexer_prune_removes_deleted_files(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     downloads = tmp_path / "downloads"
     downloads.mkdir()
     paper_path = downloads / "paper.pdf"
@@ -103,7 +107,8 @@ def test_run_library_indexer_prune_removes_deleted_files(tmp_path):
     assert stats["total"] == 0
 
 
-def test_run_library_indexer_organize_copies_without_touching_originals(tmp_path):
+def test_run_library_indexer_organize_copies_without_touching_originals(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     downloads = tmp_path / "downloads"
     downloads.mkdir()
     (downloads / "paper.pdf").write_bytes(b"%PDF-1.4 fake")
@@ -144,7 +149,8 @@ def test_run_library_indexer_raises_for_unknown_style(tmp_path):
         run_library_indexer(inputs)
 
 
-def test_run_library_indexer_report_includes_relevance_and_summary(tmp_path):
+def test_run_library_indexer_report_includes_relevance_and_summary(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     downloads = tmp_path / "downloads"
     downloads.mkdir()
     (downloads / "paper.pdf").write_bytes(b"%PDF-1.4 fake")
@@ -175,6 +181,7 @@ def test_run_library_indexer_report_includes_relevance_and_summary(tmp_path):
 
 def test_run_library_indexer_prints_one_llm_notice_not_one_per_paper(tmp_path, monkeypatch, capsys):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.chdir(tmp_path)
     downloads = tmp_path / "downloads"
     downloads.mkdir()
     for i in range(4):
@@ -205,12 +212,13 @@ def test_run_library_indexer_prints_one_llm_notice_not_one_per_paper(tmp_path, m
     assert "Claude requested but unavailable" in stderr
 
 
-def test_run_library_indexer_survives_one_file_failing_identification(tmp_path, capsys):
+def test_run_library_indexer_survives_one_file_failing_identification(tmp_path, monkeypatch, capsys):
     """A single file's identify_document() blowing up (a flaky API, an
     unexpected response shape) must not abort indexing the rest of the
     folder — same as an unreadable/unextractable file already doesn't. It
     also must not mean losing what the PDF itself told us: the file still
     gets indexed, from local heuristics alone, flagged unresolved."""
+    monkeypatch.chdir(tmp_path)
     downloads = tmp_path / "downloads"
     downloads.mkdir()
     (downloads / "a-good-paper.pdf").write_bytes(b"%PDF-1.4 fake a")
@@ -250,3 +258,104 @@ def test_run_library_indexer_survives_one_file_failing_identification(tmp_path, 
     assert "Locally Extracted Title" in by_title
     assert by_title["Locally Extracted Title"].confidence == "unresolved"
     assert "verification failed" in capsys.readouterr().err
+
+
+def test_run_library_indexer_saves_extracted_text_to_processed_dir(tmp_path):
+    downloads = tmp_path / "downloads"
+    downloads.mkdir()
+    (downloads / "paper.pdf").write_bytes(b"%PDF-1.4 fake")
+    index_path = tmp_path / "library" / "index.json"
+    processed_dir = tmp_path / "processed"
+
+    from thesis_tools.library.extract import ExtractedDocument
+
+    with patch("thesis_tools.library.library_indexer.extract_document") as mock_extract, patch(
+        "thesis_tools.library.library_indexer.identify_document",
+        side_effect=_fake_identify(paper_title="Sleep and Cognition"),
+    ):
+        mock_extract.return_value = ExtractedDocument(
+            text="The full extracted body of the paper.", title_hint=None, author_hint=None, file_type="pdf"
+        )
+        inputs = LibraryIndexerInputs(
+            folder=str(downloads), index_path=str(index_path), processed_dir=str(processed_dir)
+        )
+        run_library_indexer(inputs)
+
+    text_files = list((processed_dir / "text").glob("*.txt"))
+    assert len(text_files) == 1
+    assert text_files[0].read_text(encoding="utf-8") == "The full extracted body of the paper."
+    assert "sleep-and-cognition" in text_files[0].name
+
+
+def test_run_library_indexer_skips_processed_text_when_no_extracted_text(tmp_path):
+    downloads = tmp_path / "downloads"
+    downloads.mkdir()
+    (downloads / "paper.pdf").write_bytes(b"%PDF-1.4 fake")
+    index_path = tmp_path / "library" / "index.json"
+    processed_dir = tmp_path / "processed"
+
+    from thesis_tools.library.extract import ExtractedDocument
+
+    with patch("thesis_tools.library.library_indexer.extract_document") as mock_extract, patch(
+        "thesis_tools.library.library_indexer.identify_document", side_effect=_fake_identify()
+    ):
+        # No body text, only a title hint — still indexable, but nothing to save.
+        mock_extract.return_value = ExtractedDocument(text="", title_hint="Some Title", author_hint=None, file_type="pdf")
+        inputs = LibraryIndexerInputs(
+            folder=str(downloads), index_path=str(index_path), processed_dir=str(processed_dir)
+        )
+        run_library_indexer(inputs)
+
+    assert not (processed_dir / "text").exists()
+
+
+def test_run_library_indexer_prints_progress_counter_and_outcome(tmp_path, capsys):
+    downloads = tmp_path / "downloads"
+    downloads.mkdir()
+    (downloads / "a.pdf").write_bytes(b"%PDF-1.4 fake a")
+    (downloads / "b.pdf").write_bytes(b"%PDF-1.4 fake b")
+    index_path = tmp_path / "library" / "index.json"
+    processed_dir = tmp_path / "processed"
+
+    from thesis_tools.library.extract import ExtractedDocument
+
+    with patch("thesis_tools.library.library_indexer.extract_document") as mock_extract, patch(
+        "thesis_tools.library.library_indexer.identify_document", side_effect=_fake_identify()
+    ):
+        mock_extract.return_value = ExtractedDocument(text="some text", title_hint=None, author_hint=None, file_type="pdf")
+        inputs = LibraryIndexerInputs(
+            folder=str(downloads), index_path=str(index_path), processed_dir=str(processed_dir)
+        )
+        run_library_indexer(inputs)
+
+    err = capsys.readouterr().err
+    assert "Found 2 file(s)" in err
+    assert "[1/2]" in err and "[2/2]" in err
+    assert "verified via DOI" in err
+    assert "saved extracted text to" in err
+
+
+def test_run_library_indexer_announces_fetch_references_mode(tmp_path, capsys):
+    downloads = tmp_path / "downloads"
+    downloads.mkdir()
+    (downloads / "paper.pdf").write_bytes(b"%PDF-1.4 fake")
+    index_path = tmp_path / "library" / "index.json"
+    processed_dir = tmp_path / "processed"
+
+    from thesis_tools.library.extract import ExtractedDocument
+
+    with patch("thesis_tools.library.library_indexer.extract_document") as mock_extract, patch(
+        "thesis_tools.library.library_indexer.identify_document", side_effect=_fake_identify()
+    ):
+        mock_extract.return_value = ExtractedDocument(text="some text", title_hint=None, author_hint=None, file_type="pdf")
+        inputs = LibraryIndexerInputs(
+            folder=str(downloads),
+            index_path=str(index_path),
+            processed_dir=str(processed_dir),
+            fetch_references=True,
+        )
+        run_library_indexer(inputs)
+
+    err = capsys.readouterr().err
+    assert "Fetching each paper's own reference list too" in err
+    assert "reference(s) fetched for the citation-coverage view" in err

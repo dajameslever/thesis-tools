@@ -216,13 +216,25 @@ PDF, `.docx`, `.txt`, or saved HTML — and builds a verified, cited index of
 them, without ever renaming, moving, or modifying your original files unless
 you explicitly ask it to.
 
-Relevance scoring and sub-question stance classification use whichever
-text is actually available: a paper's abstract when it has one, otherwise
-the text extracted from the file itself. Most locally-indexed PDFs have no
-machine-readable abstract field at all (extraction grabs raw page text,
-not a parsed abstract), so this matters — without it, every such paper
-would score near-zero relevance and read as "unrelated" to every
-sub-question regardless of what it actually says.
+Relevance scoring, "what it's about" summaries, and sub-question stance
+classification all use whichever text is actually available: a paper's
+abstract when it has one, otherwise the text extracted from the file
+itself. Most locally-indexed PDFs have no machine-readable abstract field
+at all (extraction grabs raw page text, not a parsed abstract), so this
+matters — without it, every such paper would score near-zero relevance and
+read as "unrelated" to every sub-question regardless of what it actually
+says. Extraction itself keeps the **entire document**, not a prefix of it
+— a whole 40-page PDF, not just the first few pages — since these are pure
+local computations with no per-call cost; only what actually gets sent to
+Claude (stance classification, literature-review synthesis) applies its
+own separate, much smaller truncation, so a longer extraction never
+translates into a bigger API bill.
+
+Every extracted file also gets its full text saved as a plain `.txt` under
+`processed/text/` (`--processed-dir` to change where), so you can open any
+paper's extracted text directly and confirm it's complete — the same
+location and naming Part 1's `--download-papers` uses, so both land in one
+place regardless of which part found the paper.
 
 ### Usage
 
@@ -272,6 +284,13 @@ you can point it at a growing Downloads folder repeatedly. Use `--rescan` to
 force re-extraction, `--prune` to drop entries whose file was deleted, and
 `--organize --organize-to some/folder` to get **copies** (never the
 originals) renamed to a clean `Author_Year_Title.ext` scheme.
+
+Progress prints as it goes, not just a summary at the end: a `[3/22]`
+counter and filename before each file starts, then what happened to it —
+verified via DOI/title match or left unresolved, how many references were
+fetched (with `--fetch-references`), and where its extracted text was
+saved — so a long run over a big folder shows what it's actually doing
+rather than sitting silent.
 
 Run `python -m thesis_tools index-library --help` for all options.
 

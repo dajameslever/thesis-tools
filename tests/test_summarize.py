@@ -33,3 +33,20 @@ def test_summarize_falls_back_to_extractive_without_llm_key(monkeypatch):
 
 def test_summarize_none_abstract_returns_none():
     assert summarize(None, "Title", "query") is None
+
+
+def test_summarize_falls_back_to_full_text_excerpt_without_abstract():
+    excerpt = "This paper studies sleep. It finds a strong effect on cognition."
+    result = summarize(None, "Sleep Paper", "sleep cognition", full_text_excerpt=excerpt)
+    assert result == excerpt
+
+
+def test_summarize_prefers_abstract_over_full_text_excerpt_when_both_present():
+    abstract = "Abstract version of the summary."
+    excerpt = "Completely different full-text excerpt content."
+    result = summarize(abstract, "Title", "query", full_text_excerpt=excerpt)
+    assert result == abstract
+
+
+def test_summarize_none_when_neither_abstract_nor_excerpt():
+    assert summarize(None, "Title", "query", full_text_excerpt=None) is None
