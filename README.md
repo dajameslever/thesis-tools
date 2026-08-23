@@ -69,10 +69,14 @@ something (see Part 2's "Needs manual review"), the report hands you a
 pre-filled **Google Scholar** / **ScienceDirect** search link instead — not an
 API call, just a deep link, so you can finish the check by hand in one click.
 
-In Part 2, one file failing identification (a flaky API call, an
-unreadable PDF) is logged and skipped, same as an unreadable file —
-`--fetch-references` fetching a paper's own reference list is never allowed
-to abort indexing every other file in the folder.
+In Part 2, one file's DOI/title verification blowing up (a flaky API call,
+an unexpected response shape) never aborts indexing the rest of the folder,
+and never means losing that file either: it still gets indexed from the
+PDF's own extracted title/author/year alone, flagged `unresolved` in
+"Needs manual review" — same as when verification runs cleanly but finds no
+match. An actually unreadable file (corrupt, unsupported format) is the
+only thing that gets skipped outright, since there's no metadata to fall
+back to in that case.
 
 **Treat all of this as a fast first pass, not a substitute for a full
 literature review** — always also check your own institution's library

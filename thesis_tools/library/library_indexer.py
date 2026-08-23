@@ -14,7 +14,7 @@ from ..relevance import score_relevance
 from ..subquestions import analyze_subquestions
 from ..summarize import summarize
 from .extract import extract_document
-from .identify import identify_document
+from .identify import identify_document, local_heuristic_fallback
 from .index_store import LibraryEntry, LibraryIndex, hash_file
 from .organizer import organize_entries
 from .report import build_library_report
@@ -99,21 +99,27 @@ def run_library_indexer(inputs: LibraryIndexerInputs) -> Dict[str, object]:
             failed_count += 1
             continue
 
+        filename_fallback = path.stem.replace("_", " ").replace("-", " ").strip() or path.name
         try:
             identified = identify_document(
                 doc,
-                filename_fallback=path.stem.replace("_", " ").replace("-", " ").strip() or path.name,
+                filename_fallback=filename_fallback,
                 contact_email=inputs.contact_email,
                 fetch_references=inputs.fetch_references,
             )
         except Exception as exc:
-            # One paper's identification blowing up (a flaky API, an
-            # unexpected response shape) must never abort indexing every
-            # other file in the folder — same principle as the extract/hash
-            # steps above.
-            print(f"  [index] identification failed for {path} ({exc}), skipping", file=sys.stderr)
-            failed_count += 1
-            continue
+            # A lookup blowing up (a flaky API, an unexpected response shape)
+            # must never mean losing what we already know about this paper
+            # from the file itself, and must never abort indexing every
+            # other file in the folder either. Fall back to the same
+            # local-heuristics-only record identify_document() itself would
+            # return for "nothing verified" — flagged unresolved for a
+            # manual check — rather than dropping the file.
+            print(
+                f"  [index] verification failed for {path} ({exc}) — indexing from local file metadata only",
+                file=sys.stderr,
+            )
+            identified = local_heuristic_fallback(doc, filename_fallback)
         # Attach the actual extracted text (not just the resolved metadata) so
         # Part 3 can quote real wording from this paper instead of just its
         # abstract — regardless of whether identification came from a DOI

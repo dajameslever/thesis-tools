@@ -7,6 +7,7 @@ from thesis_tools.library.identify import (
     guess_title_from_text,
     guess_year,
     identify_document,
+    local_heuristic_fallback,
 )
 from thesis_tools.sources.base import Paper
 
@@ -93,6 +94,26 @@ def test_identify_document_unresolved_when_nothing_matches():
     assert result.confidence == "unresolved"
     assert result.paper.title == "My Local Notes"
     assert result.paper.authors == ["Jane Doe"]
+
+
+def test_local_heuristic_fallback_uses_title_hint_and_author():
+    doc = _doc(text="Some body text with 2021 in it.", title_hint="A Real Title", author_hint="Jane Doe")
+    result = local_heuristic_fallback(doc, "fallback-filename")
+
+    assert result.confidence == "unresolved"
+    assert result.paper.title == "A Real Title"
+    assert result.paper.authors == ["Jane Doe"]
+    assert result.paper.year == 2021
+    assert result.paper.sources == ["local-heuristic"]
+
+
+def test_local_heuristic_fallback_uses_filename_when_nothing_else_available():
+    doc = _doc(text="")
+    result = local_heuristic_fallback(doc, "My Filename As Title")
+
+    assert result.paper.title == "My Filename As Title"
+    assert result.paper.authors == []
+    assert result.paper.year is None
 
 
 def test_find_dois_extracts_and_strips_trailing_punctuation():

@@ -82,6 +82,22 @@ def _reference_dicts(papers: List[Paper]) -> List[dict]:
     return [{"doi": p.doi, "title": p.title, "year": p.year} for p in papers if p.title]
 
 
+def local_heuristic_fallback(doc: ExtractedDocument, filename_fallback: str) -> IdentifiedPaper:
+    """Build a record from the file itself alone — no network involved. This
+    is what a normal, no-match run of identify_document() falls back to; it's
+    also called directly by the indexer if identify_document() raises
+    unexpectedly, so a lookup blowing up never means losing what the PDF
+    already told us, just skipping the verification step."""
+    heuristic_title = clean_title_hint(doc.title_hint) or guess_title_from_text(doc.text) or filename_fallback
+    fallback = Paper(
+        title=heuristic_title,
+        authors=[doc.author_hint] if doc.author_hint else [],
+        year=guess_year(doc.text),
+        sources=["local-heuristic"],
+    )
+    return IdentifiedPaper(paper=fallback, confidence="unresolved")
+
+
 def identify_document(
     doc: ExtractedDocument,
     filename_fallback: str,
@@ -102,7 +118,6 @@ def identify_document(
 
     # 2. Heuristic title, confirmed via a title search.
     heuristic_title = clean_title_hint(doc.title_hint) or guess_title_from_text(doc.text) or filename_fallback
-    heuristic_year = guess_year(doc.text)
 
     candidates: List[Paper] = []
     for client in (crossref, semantic_scholar):
@@ -122,10 +137,4 @@ def identify_document(
         return IdentifiedPaper(paper=best, confidence="verified-title-match", matched_doi=best.doi, references=references)
 
     # 3. Local heuristics only — needs a manual check.
-    fallback = Paper(
-        title=heuristic_title,
-        authors=[doc.author_hint] if doc.author_hint else [],
-        year=heuristic_year,
-        sources=["local-heuristic"],
-    )
-    return IdentifiedPaper(paper=fallback, confidence="unresolved")
+    return local_heuristic_fallback(doc, filename_fallback)
