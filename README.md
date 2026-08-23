@@ -206,13 +206,28 @@ each sub-question:
 
 - Gathers the papers that support, challenge, or give mixed evidence on it
   (reusing Part 1/2's stance analysis).
-- **With Claude** (default, needs `ANTHROPIC_API_KEY`): writes a real
-  150-250 word synthesis paragraph **grounded only in the abstracts you
-  already have**, with in-text `(Author, Year)` citations — explicitly
-  instructed to never invent findings, and to say so plainly when the
-  literature doesn't actually address the sub-question.
+- **With Claude** (default — and defaults to `claude-opus-5`, not Sonnet,
+  since well-written prose benefits more from the stronger model than the
+  classification-style work in Parts 1/2; override with `--llm-model`):
+  writes a real 150-250 word synthesis paragraph following standard
+  literature-review conventions — synthesizing by theme rather than
+  listing sources one by one (no "Smith (2020) found X. Jones (2019) found
+  Y." laundry-listing), and using a *sparing* direct quotation only when
+  exact wording earns its place, otherwise paraphrasing.
 - **Without Claude** (`--no-llm`, or no API key): a structured bullet outline
   grouped by stance instead of prose — still useful, just not narrative.
+
+**Quoting is grounded in real text, not just abstracts.** For papers Part 2
+indexed locally, the draft has access to the actual extracted document text
+(with page markers for PDFs), not only the abstract — so a direct quotation
+can be a real sentence from the paper, cited with a real page number. Any
+quotation must be copied verbatim from that text or the abstract; Claude is
+explicitly instructed to never invent or reconstruct a quotation from
+memory, and to paraphrase instead if extracted text looks garbled (PDF
+extraction can introduce broken hyphenation or OCR noise). Papers found only
+via Part 1's search APIs have just an abstract — those get paraphrased, not
+quoted, and the draft's header reports how many of your sources have real
+text available so you know which claims to double-check hardest.
 
 The draft also gets an introduction, a closing **"gaps and tensions"**
 section (surfacing disagreements and sub-questions with no coverage at all —

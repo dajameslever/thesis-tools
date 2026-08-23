@@ -29,7 +29,12 @@ class ProjectState:
     style: Optional[str] = None
     contact_email: Optional[str] = None
     use_llm: bool = False
-    llm_model: str = "claude-sonnet-5"
+    # None means "never explicitly chosen" — each part picks its own sensible
+    # default in that case (e.g. Part 3 defaults to a more capable model,
+    # since drafting well-written prose benefits more from it than the
+    # classification-style work in Parts 1/2). Once a user passes --llm-model
+    # anywhere, that choice is saved here and reused everywhere.
+    llm_model: Optional[str] = None
     # Where Part 1/2's own output landed, so Part 3 can find it unprompted.
     last_topic_cache: Optional[str] = None
     last_library_index: Optional[str] = None

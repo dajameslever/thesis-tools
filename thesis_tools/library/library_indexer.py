@@ -99,6 +99,11 @@ def run_library_indexer(inputs: LibraryIndexerInputs) -> Dict[str, object]:
             contact_email=inputs.contact_email,
             fetch_references=inputs.fetch_references,
         )
+        # Attach the actual extracted text (not just the resolved metadata) so
+        # Part 3 can quote real wording from this paper instead of just its
+        # abstract — regardless of whether identification came from a DOI
+        # lookup, a title match, or local heuristics.
+        identified.paper.full_text_excerpt = doc.text or None
 
         entry = LibraryEntry(
             file_path=str(path),

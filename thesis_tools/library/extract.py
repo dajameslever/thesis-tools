@@ -39,12 +39,16 @@ def extract_pdf(path: Path) -> ExtractedDocument:
 
     reader = pypdf.PdfReader(str(path))
     chunks = []
-    for page in reader.pages[:MAX_PDF_PAGES]:
+    for page_number, page in enumerate(reader.pages[:MAX_PDF_PAGES], start=1):
         try:
-            chunks.append(page.extract_text() or "")
+            page_text = page.extract_text() or ""
         except Exception:
             continue
-    text = "\n".join(chunks)[:MAX_CHARS]
+        if page_text.strip():
+            # A page marker lets a downstream direct quote cite a real page
+            # number (e.g. for Part 3's literature review) instead of guessing.
+            chunks.append(f"[Page {page_number}]\n{page_text}")
+    text = "\n\n".join(chunks)[:MAX_CHARS]
 
     meta = reader.metadata
     title_hint = _clean_meta(getattr(meta, "title", None)) if meta else None

@@ -156,7 +156,7 @@ def _interactive_library_indexer_inputs(project: ProjectState) -> LibraryIndexer
         research_question=research_question,
         sub_questions=sub_questions,
         use_llm=use_llm,
-        llm_model=project.llm_model,
+        llm_model=project.llm_model or "claude-sonnet-5",
         fetch_references=fetch_references,
         contact_email=project.contact_email,
     )
@@ -197,7 +197,7 @@ def _interactive_literature_review_inputs(project: ProjectState) -> LiteratureRe
         sub_questions=sub_questions,
         paper_sources=sources,
         style=style,
-        llm_model=project.llm_model,
+        llm_model=project.llm_model or "claude-opus-5",
     )
 
 
@@ -284,6 +284,10 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def _run_topic_finder_command(args: argparse.Namespace) -> int:
     project = ProjectState.load(args.project_file)
+    # Explicit flag > a model the user has explicitly chosen before > this
+    # part's own sensible default. Deliberately NOT persisted unless the user
+    # actually passes --llm-model — see the project.updated() call below.
+    llm_model = args.llm_model or project.llm_model or "claude-sonnet-5"
 
     if args.field and args.working_title:
         inputs = TopicFinderInputs(
@@ -297,7 +301,7 @@ def _run_topic_finder_command(args: argparse.Namespace) -> int:
             top_n=args.top,
             min_relevance=args.min_relevance,
             use_llm_summaries=args.llm_summaries or project.use_llm,
-            llm_model=args.llm_model or project.llm_model,
+            llm_model=llm_model,
             contact_email=args.contact_email or project.contact_email,
             output_path=args.output_path,
             sub_questions=_split_semicolons(args.sub_questions) or (project.sub_questions or None),
@@ -317,8 +321,7 @@ def _run_topic_finder_command(args: argparse.Namespace) -> int:
         inputs.limit_per_source = args.limit
         inputs.top_n = args.top
         inputs.min_relevance = args.min_relevance
-        if args.llm_model:
-            inputs.llm_model = args.llm_model
+        inputs.llm_model = llm_model
         inputs.contact_email = args.contact_email or inputs.contact_email
         inputs.output_path = args.output_path
         inputs.auto_subquestions = args.auto_subquestions
@@ -344,7 +347,7 @@ def _run_topic_finder_command(args: argparse.Namespace) -> int:
         style=inputs.style,
         contact_email=inputs.contact_email,
         use_llm=inputs.use_llm_summaries,
-        llm_model=inputs.llm_model,
+        llm_model=args.llm_model,  # only an explicit --llm-model sticks; a part's own default never does
         last_topic_cache=str(cache_path_for(Path(report_path))),
     )
     project.save(args.project_file)
@@ -356,6 +359,7 @@ def _run_topic_finder_command(args: argparse.Namespace) -> int:
 def _run_index_library_command(args: argparse.Namespace) -> int:
     project = ProjectState.load(args.project_file)
     sub_questions = _split_semicolons(args.sub_questions)
+    llm_model = args.llm_model or project.llm_model or "claude-sonnet-5"
 
     if args.folder:
         inputs = LibraryIndexerInputs(
@@ -374,7 +378,7 @@ def _run_index_library_command(args: argparse.Namespace) -> int:
             research_question=args.research_question or project.research_question,
             sub_questions=sub_questions or (project.sub_questions or None),
             use_llm=args.llm_summaries or project.use_llm,
-            llm_model=args.llm_model or project.llm_model,
+            llm_model=llm_model,
         )
     elif args.non_interactive:
         print("error: --non-interactive requires --folder", file=sys.stderr)
@@ -394,8 +398,7 @@ def _run_index_library_command(args: argparse.Namespace) -> int:
         inputs.fetch_references = inputs.fetch_references or args.fetch_references
         inputs.research_question = args.research_question or inputs.research_question
         inputs.sub_questions = sub_questions or inputs.sub_questions
-        if args.llm_model:
-            inputs.llm_model = args.llm_model
+        inputs.llm_model = llm_model
         inputs.use_llm = inputs.use_llm or args.llm_summaries
 
     try:
@@ -410,7 +413,7 @@ def _run_index_library_command(args: argparse.Namespace) -> int:
         style=inputs.style,
         contact_email=inputs.contact_email,
         use_llm=inputs.use_llm,
-        llm_model=inputs.llm_model,
+        llm_model=args.llm_model,  # only an explicit --llm-model sticks
         last_library_index=stats["index_path"],
     )
     project.save(args.project_file)
@@ -435,7 +438,7 @@ def _run_literature_review_command(args: argparse.Namespace) -> int:
         research_question = args.research_question or project.research_question
         sub_questions = _split_semicolons(args.sub_questions) or list(project.sub_questions)
         style = args.style or project.style or "apa"
-        llm_model = args.llm_model or project.llm_model
+        llm_model = args.llm_model or project.llm_model or "claude-opus-5"
         use_llm = not args.no_llm
 
         sources = []
@@ -497,7 +500,7 @@ def _run_literature_review_command(args: argparse.Namespace) -> int:
         research_question=inputs.research_question,
         sub_questions=inputs.sub_questions,
         style=inputs.style,
-        llm_model=inputs.llm_model,
+        llm_model=args.llm_model,  # only an explicit --llm-model sticks — Part 3's own default never does
     )
     project.save(args.project_file)
 

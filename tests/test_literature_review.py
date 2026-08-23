@@ -3,7 +3,12 @@ from unittest.mock import patch
 
 import pytest
 
-from thesis_tools.literature_review import LiteratureReviewInputs, run_literature_review
+from thesis_tools.literature_review import (
+    MAX_PAPERS_PER_SYNTHESIS_CALL,
+    LiteratureReviewInputs,
+    _paper_block,
+    run_literature_review,
+)
 from thesis_tools.sources.base import Paper
 
 
@@ -190,3 +195,107 @@ def test_run_literature_review_uses_llm_when_available(mock_ask, mock_get_client
     text = output_path.read_text()
     assert "Claude-written prose" in text
     assert "Claude-written synthesis paragraph" in text
+
+
+def test_paper_block_includes_verbatim_abstract_and_excerpt():
+    paper = Paper(
+        title="Sleep Study",
+        year=2020,
+        authors=["Jane Doe"],
+        abstract="We find X.",
+        full_text_excerpt="[Page 1]\nIntroduction text.\n\n[Page 2]\nWe find X in more detail here.",
+    )
+    block = _paper_block(paper, "supports")
+    assert '"We find X."' in block
+    assert "[Page 2]" in block
+    assert "We find X in more detail here." in block
+    assert "Doe (2020)" in block
+
+
+def test_paper_block_flags_when_nothing_available():
+    paper = Paper(title="Mystery Paper", authors=["Jane Doe"])
+    block = _paper_block(paper, "supports")
+    assert "no abstract or text available" in block
+
+
+def test_run_literature_review_reports_full_text_availability(tmp_path, monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    with_text = Paper(
+        title="Indexed Paper",
+        year=2021,
+        authors=["Jane Doe"],
+        doi="10.1/a",
+        abstract="We find a significant effect, consistent with theory.",
+        full_text_excerpt="[Page 1]\nWe find a significant effect, consistent with theory, in our sample.",
+    )
+    abstract_only = Paper(
+        title="Searched Paper",
+        year=2019,
+        authors=["Bob Smith"],
+        doi="10.1/b",
+        abstract="Contrary to expectations, we found no significant effect.",
+    )
+    index_path = tmp_path / "library" / "index.json"
+    index_path.parent.mkdir()
+    _write_library_index(index_path, [with_text])
+    cache_path = tmp_path / "report.md.papers.json"
+    _write_topic_cache(cache_path, [abstract_only])
+
+    output_path = tmp_path / "review.md"
+    inputs = LiteratureReviewInputs(
+        field="Psychology",
+        working_title="Sleep Study",
+        research_question="Does sleep have a significant effect?",
+        sub_questions=["Does sleep have a significant effect?"],
+        paper_sources=[str(cache_path), str(index_path)],
+        output_path=str(output_path),
+        use_llm=False,
+    )
+    run_literature_review(inputs)
+    text = output_path.read_text()
+    assert "Real text available for quoting:** 1 of 2" in text
+
+
+@patch("thesis_tools.literature_review.llm.get_client")
+@patch("thesis_tools.literature_review.llm.ask")
+def test_synthesis_caps_papers_per_call(mock_ask, mock_get_client, tmp_path, monkeypatch):
+    mock_get_client.return_value = object()
+    mock_ask.return_value = "A synthesis paragraph."
+
+    papers = [
+        Paper(
+            title=f"Paper {i}",
+            year=2020,
+            authors=[f"Author{i}"],
+            doi=f"10.1/{i}",
+            abstract="We find a significant effect, consistent with theory of sleep.",
+        )
+        for i in range(MAX_PAPERS_PER_SYNTHESIS_CALL + 4)
+    ]
+    cache_path = tmp_path / "report.md.papers.json"
+    _write_topic_cache(cache_path, papers)
+
+    output_path = tmp_path / "review.md"
+    inputs = LiteratureReviewInputs(
+        field="X",
+        working_title="Sleep",
+        research_question="Does sleep have an effect?",
+        sub_questions=["Does sleep have an effect?"],
+        paper_sources=[str(cache_path)],
+        output_path=str(output_path),
+        use_llm=True,
+        min_relevance=0.0,
+    )
+    run_literature_review(inputs)
+
+    # Only one call per sub-question (plus intro/gaps), and the reference
+    # list should be capped, not one entry per paper found.
+    call_args = mock_ask.call_args_list
+    synthesis_calls = [c for c in call_args if "Sub-question:" in c.args[2]]
+    assert len(synthesis_calls) == 1
+    papers_in_prompt = synthesis_calls[0].args[2].count("- Author")
+    assert papers_in_prompt <= MAX_PAPERS_PER_SYNTHESIS_CALL
+
+    text = output_path.read_text()
+    cited_count = sum(1 for p in papers if f"10.1/{papers.index(p)}" in text)
+    assert cited_count <= MAX_PAPERS_PER_SYNTHESIS_CALL

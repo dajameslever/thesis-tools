@@ -22,6 +22,13 @@ class Paper:
     pages: Optional[str] = None
     citation_count: Optional[int] = None
     sources: List[str] = field(default_factory=list)
+    # Verbatim text extracted from the actual downloaded file (Part 2 only —
+    # Part 1's search APIs never hand us more than an abstract). When
+    # present, page markers ("[Page N]") may appear in the text where known,
+    # so a direct quote can be cited with a real page number. Used by Part 3
+    # to ground direct quotations in text we've actually seen, rather than
+    # letting an LLM improvise a plausible-sounding one from the abstract.
+    full_text_excerpt: Optional[str] = None
 
     def key(self) -> str:
         """A best-effort stable identifier, preferring DOI."""

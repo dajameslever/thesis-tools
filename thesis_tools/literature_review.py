@@ -31,10 +31,12 @@ from .sources.base import Paper
 from .subquestions import SubquestionAnalysis, analyze_subquestions
 
 DISCLAIMER = (
-    "> ⚠️ **This is an AI-assisted DRAFT**, synthesized only from paper *abstracts* already "
-    "gathered by Part 1/Part 2 — not full texts. Verify every claim against the actual paper "
-    "before relying on it, and rewrite this in your own voice. Treat it as a structured "
-    "starting point, not a citable final draft."
+    "> ⚠️ **This is an AI-assisted DRAFT.** Claims are grounded in paper abstracts, plus real "
+    "extracted text (and, where available, real page numbers) for anything indexed by Part 2 — "
+    "but any direct quotation should still be checked against the actual PDF: automated text "
+    "extraction can introduce artifacts (broken hyphenation, dropped characters, OCR noise). "
+    "Verify every claim and quote before relying on it, and rewrite this in your own voice. "
+    "Treat it as a structured starting point, not a citable final draft."
 )
 
 
@@ -47,7 +49,10 @@ class LiteratureReviewInputs:
     paper_sources: List[str]  # paths to Part 1 <report>.papers.json and/or Part 2 library/index.json
     style: str = "apa"
     use_llm: bool = True
-    llm_model: str = "claude-sonnet-5"
+    # Defaults to the more capable model, not Sonnet: this is the one part of
+    # the toolkit whose output is meant to be well-written, citable prose,
+    # not a classification/summarization pass — worth the extra cost.
+    llm_model: str = "claude-opus-5"
     min_relevance: float = 0.1
     output_path: Optional[str] = None
 
@@ -106,23 +111,57 @@ def _draft_intro(inputs: LiteratureReviewInputs, num_papers: int, client) -> str
     )
 
 
+MAX_EXCERPT_CHARS_FOR_PROMPT = 3000
+MAX_PAPERS_PER_SYNTHESIS_CALL = 6
+
+# Grounded in standard literature-review guidance (e.g. Purdue OWL, university
+# writing-center synthesis guides): synthesize by theme, don't summarize
+# source-by-source; avoid the "laundry list"/"he-said-she-said" pattern where
+# every sentence opens with an author's name; quote sparingly and only when
+# exact wording earns its place, otherwise paraphrase; connect and contrast
+# sources within the same sentence rather than listing them in sequence.
 _SYNTHESIS_SYSTEM_PROMPT = (
     "You write ONE literature-review paragraph (150-250 words) addressing the given sub-question, "
-    "using ONLY the paper abstracts provided below. Rules:\n"
-    "- Ground every claim in the abstracts given. Never invent findings, numbers, or papers not listed.\n"
-    "- Cite in-text as (LastName, Year) right after each claim you attribute to a paper.\n"
+    "using ONLY the material provided below for each paper. This is for an academic literature "
+    "review, so follow standard literature-review conventions:\n"
+    "- SYNTHESIZE, don't summarize source-by-source. Never write a 'laundry list' where every "
+    "sentence starts with an author's name (e.g. 'Smith (2020) found X. Jones (2019) found Y.'). "
+    "Instead, lead with the claim or theme, and weave citations in as support — explicitly comparing, "
+    "contrasting, or grouping sources that agree or disagree within the same sentence or two.\n"
+    "- PREFER PARAPHRASE. Use a short direct quotation only when the exact wording matters — a precise "
+    "definition, a specific finding stated in a distinctive or memorable way, or language too important "
+    "to paraphrase safely. Use at most 1-2 direct quotations in the whole paragraph, even with more "
+    "papers available — quoting every paper is a sign of weak synthesis, not thoroughness.\n"
+    "- QUOTE VERBATIM ONLY. Any text inside quotation marks must be copied character-for-character from "
+    "an 'Abstract' or 'Excerpt from the original document' block given below — never invent, "
+    "paraphrase-then-quote, or reconstruct a quotation from memory. If nothing given is worth quoting "
+    "directly, use zero quotations — that's the normal case, not a failure.\n"
+    "- CITE QUOTES PROPERLY. A quotation from an 'Excerpt' block near a '[Page N]' marker should be "
+    "cited (LastName, Year, p. N). A quotation from an 'Abstract' block (which isn't paginated) should "
+    "be cited (LastName, Year) with no invented page number.\n"
+    "- Cite every other claim in-text as (LastName, Year) right after it.\n"
     "- If the papers disagree with each other, say so explicitly and name which side each is on.\n"
     "- Write in formal academic prose — full sentences and paragraphs, not bullet points.\n"
-    "- If the abstracts given don't really address the sub-question, say that plainly instead of stretching."
+    "- Text extracted from PDFs can contain minor artifacts (broken hyphenation, odd line breaks, "
+    "OCR noise) — if a passage looks garbled, paraphrase instead of quoting it.\n"
+    "- If the material given doesn't really address the sub-question, say that plainly instead of stretching."
 )
 
 
 def _paper_block(paper: Paper, stance_label: str) -> str:
     author = paper.authors[0].split()[-1] if paper.authors and paper.authors[0].split() else "Unknown"
-    return (
-        f"- {author} ({paper.year or 'n.d.'}), stance: {stance_label}. "
-        f"Title: {paper.title}. Abstract: {paper.abstract or '(no abstract available)'}"
-    )
+    lines = [f"- {author} ({paper.year or 'n.d.'}), stance: {stance_label}. Title: {paper.title}."]
+    if paper.abstract:
+        lines.append(f'  Abstract (verbatim): "{paper.abstract}"')
+    if paper.full_text_excerpt:
+        excerpt = paper.full_text_excerpt[:MAX_EXCERPT_CHARS_FOR_PROMPT]
+        lines.append(
+            f'  Excerpt from the original document, verbatim, "[Page N]" markers included where known '
+            f'(quote this exact wording only, citing the nearest page marker): "{excerpt}"'
+        )
+    if not paper.abstract and not paper.full_text_excerpt:
+        lines.append("  (no abstract or text available — do not make specific claims about this paper's findings)")
+    return "\n".join(lines)
 
 
 def _draft_synthesis_paragraph(
@@ -131,20 +170,26 @@ def _draft_synthesis_paragraph(
     inputs: LiteratureReviewInputs,
     client,
 ) -> Tuple[str, List[Paper]]:
-    cited_papers = grouped["supports"] + grouped["challenges"] + grouped["mixed"]
-    if not cited_papers:
+    labeled = [
+        (label, p)
+        for label, papers in (("supports", grouped["supports"]), ("challenges", grouped["challenges"]), ("mixed/ambiguous", grouped["mixed"]))
+        for p in papers
+    ]
+    if not labeled:
         return (
             "_No paper in the current sources speaks directly to this sub-question — "
             "a potential gap worth targeting with a follow-up search._",
             [],
         )
 
+    # Cap how many papers go into one call — keeps prompt size (and cost)
+    # bounded regardless of library size. Papers arrive here already
+    # relevance-ranked, so this keeps the strongest matches.
+    labeled = labeled[:MAX_PAPERS_PER_SYNTHESIS_CALL]
+    cited_papers = [p for _, p in labeled]
+
     if client is not None:
-        blocks = [
-            _paper_block(p, label)
-            for label, papers in (("supports", grouped["supports"]), ("challenges", grouped["challenges"]), ("mixed/ambiguous", grouped["mixed"]))
-            for p in papers
-        ]
+        blocks = [_paper_block(p, label) for label, p in labeled]
         user_message = f"Sub-question: {question}\n\nPapers:\n" + "\n".join(blocks)
         result = llm.ask(client, _SYNTHESIS_SYSTEM_PROMPT, user_message, model=inputs.llm_model, max_tokens=400)
         if result:
@@ -152,11 +197,10 @@ def _draft_synthesis_paragraph(
 
     # Heuristic fallback: an honest structured outline, not prose.
     lines = []
-    for label, papers in (("Supports", grouped["supports"]), ("Challenges", grouped["challenges"]), ("Mixed evidence", grouped["mixed"])):
-        for p in papers:
-            author = p.authors[0].split()[-1] if p.authors and p.authors[0].split() else "Unknown"
-            snippet = (p.abstract or "")[:220].strip()
-            lines.append(f"- **{label}** — ({author}, {p.year or 'n.d.'}): {snippet}")
+    for label, p in labeled:
+        author = p.authors[0].split()[-1] if p.authors and p.authors[0].split() else "Unknown"
+        snippet = (p.abstract or p.full_text_excerpt or "")[:220].strip()
+        lines.append(f"- **{label.capitalize()}** — ({author}, {p.year or 'n.d.'}): {snippet}")
     return "\n".join(lines), cited_papers
 
 
@@ -211,7 +255,7 @@ def run_literature_review(inputs: LiteratureReviewInputs) -> str:
         )
 
     query_text = inputs.research_question or inputs.working_title
-    scored = [(p, score_relevance(query_text, p)) for p in papers]
+    scored = sorted(((p, score_relevance(query_text, p)) for p in papers), key=lambda pair: pair[1], reverse=True)
     relevant = [p for p, r in scored if r >= inputs.min_relevance]
     if not relevant:
         # Better an unfiltered draft than an empty one — the relevance
@@ -233,7 +277,12 @@ def run_literature_review(inputs: LiteratureReviewInputs) -> str:
     lines.append(f"- **Working title:** {inputs.working_title}")
     if inputs.research_question:
         lines.append(f"- **Research question:** {inputs.research_question}")
+    with_full_text = sum(1 for p in papers if p.full_text_excerpt)
     lines.append(f"- **Drawing on:** {len(papers)} paper(s) from {len(inputs.paper_sources)} source file(s)")
+    lines.append(
+        f"- **Real text available for quoting:** {with_full_text} of {len(papers)} paper(s) "
+        f"(indexed by Part 2) — the rest have only an abstract, so claims about them are paraphrased, not quoted"
+    )
     lines.append(f"- **Drafting mode:** {'Claude-written prose' if client else 'heuristic structured outline (no ANTHROPIC_API_KEY, or --no-llm)'}")
     lines.append("")
 

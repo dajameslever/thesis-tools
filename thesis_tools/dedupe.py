@@ -18,6 +18,7 @@ def _years_compatible(a: Paper, b: Paper) -> bool:
 def _merge(a: Paper, b: Paper) -> Paper:
     """Merge `b` into `a`, preferring whichever field is populated / richer."""
     a.abstract = a.abstract if (a.abstract and len(a.abstract) >= len(b.abstract or "")) else (b.abstract or a.abstract)
+    a.full_text_excerpt = a.full_text_excerpt or b.full_text_excerpt
     a.doi = a.doi or b.doi
     a.venue = a.venue or b.venue
     a.year = a.year or b.year
