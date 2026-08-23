@@ -84,7 +84,10 @@ class CrossrefClient(SourceClient):
             return []
 
         papers = []
-        for item in data.get("message", {}).get("items", []):
+        # `.get(key, default)` only falls back when the key is *missing* —
+        # guard the "key present but null" case at both levels too.
+        message = data.get("message") or {}
+        for item in message.get("items") or []:
             paper = _parse_item(item)
             if paper is not None:
                 papers.append(paper)

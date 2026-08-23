@@ -89,7 +89,10 @@ class SemanticScholarClient(SourceClient):
             return []
 
         papers = []
-        for item in data.get("data", []):
+        # `.get("data", [])` only falls back when the key is *missing* — this
+        # API can return {"data": null} outright (e.g. zero results), which
+        # `.get` happily hands back as None, not the default.
+        for item in data.get("data") or []:
             paper = _parse_item(item)
             if paper is not None:
                 papers.append(paper)
@@ -124,7 +127,9 @@ class SemanticScholarClient(SourceClient):
             return []
 
         papers = []
-        for item in data.get("data", []):
+        # Same "key present but null" case as search() above — a paper with
+        # no listed references can come back as {"data": null}, not [].
+        for item in data.get("data") or []:
             paper = _parse_item(item.get("citedPaper") or {})
             if paper is not None:
                 papers.append(paper)

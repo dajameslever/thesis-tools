@@ -308,3 +308,35 @@ def test_openalex_search_handles_null_json_body(mock_get):
 def test_crossref_search_handles_null_json_body(mock_get):
     mock_get.return_value = _mock_null_body_response()
     assert CrossrefClient().search("sleep cognition") == []
+
+
+@patch("thesis_tools.sources.semantic_scholar.requests.get")
+def test_semantic_scholar_search_handles_explicit_null_data_key(mock_get):
+    """{"data": null} — key present, value null — is different from a
+    missing key, and `.get("data", [])` doesn't catch it."""
+    mock_get.return_value = _mock_response(json_data={"data": None})
+    assert SemanticScholarClient().search("sleep cognition") == []
+
+
+@patch("thesis_tools.sources.semantic_scholar.requests.get")
+def test_semantic_scholar_lookup_references_handles_explicit_null_data_key(mock_get):
+    mock_get.return_value = _mock_response(json_data={"data": None})
+    assert SemanticScholarClient().lookup_references("10.1/x") == []
+
+
+@patch("thesis_tools.sources.openalex.requests.get")
+def test_openalex_search_handles_explicit_null_results_key(mock_get):
+    mock_get.return_value = _mock_response(json_data={"results": None})
+    assert OpenAlexClient().search("sleep cognition") == []
+
+
+@patch("thesis_tools.sources.crossref.requests.get")
+def test_crossref_search_handles_explicit_null_message_and_items(mock_get):
+    mock_get.return_value = _mock_response(json_data={"message": None})
+    assert CrossrefClient().search("sleep cognition") == []
+
+
+@patch("thesis_tools.sources.crossref.requests.get")
+def test_crossref_search_handles_explicit_null_items_key(mock_get):
+    mock_get.return_value = _mock_response(json_data={"message": {"items": None}})
+    assert CrossrefClient().search("sleep cognition") == []

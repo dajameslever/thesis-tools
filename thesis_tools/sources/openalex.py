@@ -56,7 +56,9 @@ class OpenAlexClient(SourceClient):
             return []
 
         papers = []
-        for item in data.get("results", []):
+        # `.get("results", [])` only falls back when the key is *missing* —
+        # guard the "key present but null" case too.
+        for item in data.get("results") or []:
             authors = [
                 (a.get("author") or {}).get("display_name", "")
                 for a in (item.get("authorships") or [])
