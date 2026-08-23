@@ -286,14 +286,28 @@ default — open it straight in a browser, no server needed) from the index
   5-year buckets if the range is wide).
 - **Citation coverage** — the same included-vs-missing breakdown as the
   Markdown report's "Citation coverage" section, plus the frequently-missing
-  table, in one place (needs `--fetch-references` to have been used at
-  least once).
+  table (needs `--fetch-references` to have been used at least once). Each
+  missing reference gets a direct DOI link when one's known, plus
+  pre-filled Google Scholar and ScienceDirect search links as a fallback —
+  the same deep-search pattern used for "Needs manual review" — so you can
+  go track one down in one click instead of retyping the title.
+- **Citation network** — an interactive, draggable graph of who cites whom:
+  every indexed paper as a node (green = verified, amber = unresolved),
+  plus a node for each reference cited by 2+ of your papers but still
+  missing from your library (gray, sized by how often it's cited). An edge
+  from paper A to paper B means A cites B — including edges **between your
+  own indexed papers**, which is the one thing the Markdown report's
+  Mermaid mind-map doesn't show. Drag the background to pan, scroll to
+  zoom, drag a node to reposition it, and click a node to see its details
+  and the same DOI/Scholar/ScienceDirect links. Pure inline SVG + vanilla
+  JS — no charting library, so it works opened straight off disk.
 - **Weaknesses worth a second look** — computed flags, not just raw counts:
   unresolved files, possible duplicate downloads, a high share of papers
   with no abstract on record, over-reliance on a single source (70%+ from
   one database), a high share of cited references still missing, and a
   library skewed toward older papers. Each flag lists the specific
-  files/papers involved, not just a percentage.
+  files/papers involved — with the same find-it links where relevant — not
+  just a percentage.
 
 It's pure local computation over the existing index — no network calls, so
 it's cheap to regenerate (`-o some/path.html` to change where it's written)

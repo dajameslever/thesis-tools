@@ -179,16 +179,19 @@ def test_frequently_missing_table_links_by_doi_when_known():
 
 
 def test_frequently_missing_table_falls_back_to_search_links_without_doi():
+    from thesis_tools.library.visualize import _frequently_missing_table
+
     index = LibraryIndex(
         [
             _entry("a.pdf", doi="10.1/a", references=[{"doi": None, "title": "No DOI Known", "year": 2001}]),
             _entry("b.pdf", doi="10.1/b", references=[{"doi": None, "title": "No DOI Known", "year": 2001}]),
         ]
     )
-    html = render_html(compute_stats(index))
-    assert "doi.org" not in html
-    assert "scholar.google.com" in html
-    assert "sciencedirect.com" in html
+    stats = compute_stats(index)
+    table_html = _frequently_missing_table(stats["coverage"]["frequently_missing"])
+    assert "doi.org" not in table_html
+    assert "scholar.google.com" in table_html
+    assert "sciencedirect.com" in table_html
 
 
 def test_unresolved_weakness_includes_search_links():
@@ -196,3 +199,54 @@ def test_unresolved_weakness_includes_search_links():
     html = render_html(compute_stats(index))
     assert "scholar.google.com" in html
     assert "sciencedirect.com" in html
+
+
+def test_citation_network_empty_when_no_indexed_papers():
+    html = render_html(compute_stats(LibraryIndex()))
+    assert "No citation data yet" not in html  # empty-index short-circuit happens before this section
+
+
+def test_citation_network_shows_prompt_when_no_references_fetched():
+    index = LibraryIndex([_entry("a.pdf")])
+    html = render_html(compute_stats(index))
+    assert "No citation data yet" not in html
+    # A single indexed paper with no references still gets a node in the graph.
+    assert "GRAPH_DATA" in html
+    assert '"kind": "indexed"' in html
+
+
+def test_citation_network_embeds_valid_json_payload():
+    import json
+
+    index = LibraryIndex(
+        [
+            _entry("a.pdf", doi="10.1/a", references=[{"doi": "10.1/b", "title": "B", "year": 2020}]),
+            _entry("b.pdf", doi="10.1/b"),
+        ]
+    )
+    html = render_html(compute_stats(index))
+
+    start = html.index("const GRAPH_DATA = ") + len("const GRAPH_DATA = ")
+    end = html.index(";\n", start)
+    payload = json.loads(html[start:end])
+
+    assert len(payload["nodes"]) == 2
+    assert len(payload["edges"]) == 1
+    assert all("links_html" in n for n in payload["nodes"])
+
+
+def test_citation_network_node_gets_doi_link_when_available():
+    index = LibraryIndex([_entry("a.pdf", doi="10.1/a")])
+    html = render_html(compute_stats(index))
+    assert "https://doi.org/10.1/a" in html
+
+
+def test_citation_network_gap_node_gets_search_links():
+    index = LibraryIndex(
+        [
+            _entry("a.pdf", doi="10.1/a", references=[{"doi": None, "title": "Missing Work", "year": 2000}]),
+            _entry("b.pdf", doi="10.1/b", references=[{"doi": None, "title": "Missing Work", "year": 2000}]),
+        ]
+    )
+    html = render_html(compute_stats(index))
+    assert "scholar.google.com/scholar?q=Missing+Work" in html

@@ -16,9 +16,11 @@ import datetime as _dt
 import html as _html
 from typing import Dict, List, Optional, Tuple
 
+import json as _json
+
 from ..links import doi_url, google_scholar_search_url, sciencedirect_search_url
 from ..recency import DEFAULT_OLD_THRESHOLD_YEARS, age_years, newest_year
-from .citation_graph import build_coverage
+from .citation_graph import build_citation_network, build_coverage
 from .index_store import LibraryEntry, LibraryIndex
 
 # Display labels and a fixed order for the "by source" breakdown — the
@@ -87,6 +89,7 @@ def compute_stats(index: LibraryIndex) -> dict:
     duplicates = index.duplicates_by_doi()
     coverage = build_coverage(entries)
     references_fetched = any(e.references for e in entries)
+    citation_network = build_citation_network(entries, coverage)
 
     stats = {
         "generated_at": _dt.datetime.now().strftime("%Y-%m-%d %H:%M"),
@@ -102,6 +105,7 @@ def compute_stats(index: LibraryIndex) -> dict:
         "old_papers_count": len(old_papers),
         "unresolved_entries": unresolved_entries,
         "coverage": coverage,
+        "citation_network": citation_network,
         "references_fetched": references_fetched,
     }
     stats["weaknesses"] = _compute_weaknesses(stats)
@@ -392,6 +396,16 @@ table.viz-table th { color: var(--viz-text-secondary); font-weight: 600; }
 .viz-root a:visited { opacity: 0.85; }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .viz-root a { color: #3987e5; } }
 :root[data-theme="dark"] .viz-root a { color: #3987e5; }
+.viz-graph-svg { width: 100%; height: 480px; display: block; background: var(--viz-page); border: 1px solid var(--viz-border); border-radius: 8px; cursor: grab; touch-action: none; }
+.viz-graph-svg:active { cursor: grabbing; }
+.viz-graph-edge { stroke: var(--viz-muted); stroke-opacity: 0.5; stroke-width: 1.5; transition: stroke-opacity 0.15s; }
+.viz-graph-edge.viz-graph-dim { stroke-opacity: 0.06; }
+.viz-graph-node { cursor: pointer; }
+.viz-graph-node.viz-graph-dim { opacity: 0.15; }
+.viz-graph-label { font-size: 10px; fill: var(--viz-text-secondary); pointer-events: none; }
+.viz-graph-legend { display: flex; gap: 16px; flex-wrap: wrap; font-size: 0.8rem; color: var(--viz-text-secondary); margin: 4px 0 12px; }
+.viz-graph-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }
+.viz-graph-info { margin-top: 12px; padding: 10px 14px; border: 1px solid var(--viz-border); border-radius: 8px; background: var(--viz-surface); font-size: 0.85rem; min-height: 20px; }
 """
 
 
@@ -459,6 +473,9 @@ def render_html(stats: dict) -> str:
         <h2>Citation coverage</h2>
         {coverage_html}
 
+        <h2>Citation network</h2>
+        {_render_citation_network_section(stats["citation_network"])}
+
         <h2>Weaknesses worth a second look</h2>
         {weaknesses_html}
         """
@@ -479,6 +496,238 @@ def render_html(stats: dict) -> str:
 </div>
 </body>
 </html>"""
+
+
+def _network_node_payload(node: dict) -> dict:
+    """Adds the "Find it" links server-side (same helper used elsewhere) so
+    the client-side JS never has to know about DOI/Scholar/ScienceDirect
+    URL formats — it just drops in whatever HTML it's handed."""
+    payload = dict(node)
+    if node["kind"] == "gap" or node.get("confidence") == "unresolved":
+        payload["links_html"] = _find_it_links_html(node["title"], node.get("doi"))
+    elif node.get("doi"):
+        payload["links_html"] = f'<a href="{_esc(doi_url(node["doi"]))}" target="_blank" rel="noopener">DOI</a>'
+    else:
+        payload["links_html"] = ""
+    return payload
+
+
+# Vanilla-JS force-directed graph — no charting/graph library, so the page
+# still opens correctly straight off disk. A fixed number of simulation
+# ticks run synchronously up front (a personal library's citation graph is
+# small enough that this settles instantly); dragging a node just moves it
+# and its incident edges directly, no re-simulation needed.
+_GRAPH_JS = """
+(function() {
+  const svg = document.getElementById('viz-graph-svg');
+  const viewport = document.getElementById('viz-graph-viewport');
+  const info = document.getElementById('viz-graph-info');
+  if (!svg || !GRAPH_DATA.nodes.length) { return; }
+  const width = 640, height = 480;
+  const NS = 'http://www.w3.org/2000/svg';
+
+  const nodes = GRAPH_DATA.nodes.map(function(n, i) {
+    const angle = (i / GRAPH_DATA.nodes.length) * Math.PI * 2;
+    const radius = 40 + Math.min(GRAPH_DATA.nodes.length * 6, 160);
+    return Object.assign({}, n, {
+      x: width / 2 + Math.cos(angle) * radius + (Math.random() - 0.5) * 20,
+      y: height / 2 + Math.sin(angle) * radius + (Math.random() - 0.5) * 20,
+      vx: 0, vy: 0, pinned: false,
+    });
+  });
+  const nodeById = {};
+  nodes.forEach(function(n) { nodeById[n.id] = n; });
+  const edges = GRAPH_DATA.edges
+    .map(function(e) { return { source: nodeById[e.source], target: nodeById[e.target] }; })
+    .filter(function(e) { return e.source && e.target; });
+
+  function tick() {
+    for (let i = 0; i < nodes.length; i++) {
+      for (let j = i + 1; j < nodes.length; j++) {
+        const a = nodes[i], b = nodes[j];
+        let dx = a.x - b.x, dy = a.y - b.y;
+        const distSq = Math.max(dx * dx + dy * dy, 1);
+        const force = 700 / distSq;
+        const dist = Math.sqrt(distSq);
+        dx /= dist; dy /= dist;
+        a.vx += dx * force; a.vy += dy * force;
+        b.vx -= dx * force; b.vy -= dy * force;
+      }
+    }
+    edges.forEach(function(e) {
+      let dx = e.target.x - e.source.x, dy = e.target.y - e.source.y;
+      const dist = Math.sqrt(dx * dx + dy * dy) || 0.01;
+      const force = (dist - 110) * 0.02;
+      dx /= dist; dy /= dist;
+      e.source.vx += dx * force; e.source.vy += dy * force;
+      e.target.vx -= dx * force; e.target.vy -= dy * force;
+    });
+    nodes.forEach(function(n) {
+      if (n.pinned) { n.vx = 0; n.vy = 0; return; }
+      n.vx += (width / 2 - n.x) * 0.002;
+      n.vy += (height / 2 - n.y) * 0.002;
+      n.vx *= 0.82; n.vy *= 0.82;
+      n.x += n.vx; n.y += n.vy;
+      n.x = Math.max(16, Math.min(width - 16, n.x));
+      n.y = Math.max(16, Math.min(height - 16, n.y));
+    });
+  }
+  for (let i = 0; i < 350; i++) { tick(); }
+
+  function el(tag, attrs) {
+    const e = document.createElementNS(NS, tag);
+    for (const k in attrs) { e.setAttribute(k, attrs[k]); }
+    return e;
+  }
+  function escapeHtml(s) {
+    const d = document.createElement('div');
+    d.textContent = s == null ? '' : String(s);
+    return d.innerHTML;
+  }
+
+  const edgeEls = edges.map(function(e) {
+    const line = el('line', {
+      class: 'viz-graph-edge', x1: e.source.x, y1: e.source.y, x2: e.target.x, y2: e.target.y,
+    });
+    viewport.appendChild(line);
+    return { line: line, edge: e };
+  });
+
+  function colorFor(n) {
+    if (n.kind === 'gap') { return '#898781'; }
+    return n.confidence === 'unresolved' ? '#fab219' : '#0ca30c';
+  }
+
+  const nodeEls = nodes.map(function(n) {
+    const radius = n.kind === 'gap' ? Math.min(6 + (n.cited_by_count || 1) * 1.5, 16) : 9;
+    const g = el('g', { class: 'viz-graph-node', transform: 'translate(' + n.x + ',' + n.y + ')' });
+    const circle = el('circle', { r: radius, fill: colorFor(n) });
+    const label = el('text', { class: 'viz-graph-label', x: radius + 4, y: 4 });
+    const shortTitle = (n.title && n.title.length > 34) ? n.title.slice(0, 33) + '…' : (n.title || 'Untitled');
+    label.textContent = shortTitle;
+    g.appendChild(circle);
+    g.appendChild(label);
+    viewport.appendChild(g);
+    return { g: g, node: n };
+  });
+
+  function selectNode(n) {
+    const connected = { };
+    connected[n.id] = true;
+    edgeEls.forEach(function(pair) {
+      if (pair.edge.source === n) { connected[pair.edge.target.id] = true; }
+      if (pair.edge.target === n) { connected[pair.edge.source.id] = true; }
+    });
+    nodeEls.forEach(function(pair) {
+      pair.g.classList.toggle('viz-graph-dim', !connected[pair.node.id]);
+    });
+    edgeEls.forEach(function(pair) {
+      const on = pair.edge.source === n || pair.edge.target === n;
+      pair.line.classList.toggle('viz-graph-dim', !on);
+    });
+    let html = '<strong>' + escapeHtml(n.title || 'Untitled') + '</strong>';
+    if (n.year) { html += ' (' + n.year + ')'; }
+    html += '<br>';
+    if (n.kind === 'indexed') {
+      html += 'Status: ' + escapeHtml(n.confidence || 'unknown') + '<br>';
+      if (n.file_path) { html += 'File: ' + escapeHtml(n.file_path) + '<br>'; }
+    } else {
+      html += 'Cited by ' + (n.cited_by_count || 0) + ' of your indexed papers — not yet in your library.<br>';
+    }
+    if (n.links_html) { html += n.links_html; }
+    info.innerHTML = html;
+  }
+
+  function clearSelection() {
+    nodeEls.forEach(function(pair) { pair.g.classList.remove('viz-graph-dim'); });
+    edgeEls.forEach(function(pair) { pair.line.classList.remove('viz-graph-dim'); });
+    info.innerHTML = '<span class="viz-muted">Click a node to see details and links.</span>';
+  }
+
+  function toSvgPoint(evt) {
+    const pt = svg.createSVGPoint();
+    pt.x = evt.clientX; pt.y = evt.clientY;
+    return pt.matrixTransform(viewport.getScreenCTM().inverse());
+  }
+
+  nodeEls.forEach(function(pair) {
+    const n = pair.node, g = pair.g;
+    let dragging = false;
+    g.addEventListener('mousedown', function(ev) {
+      dragging = true; n.pinned = true;
+      ev.stopPropagation();
+    });
+    window.addEventListener('mousemove', function(ev) {
+      if (!dragging) { return; }
+      const pt = toSvgPoint(ev);
+      n.x = pt.x; n.y = pt.y;
+      g.setAttribute('transform', 'translate(' + n.x + ',' + n.y + ')');
+      edgeEls.forEach(function(ep) {
+        if (ep.edge.source === n) { ep.line.setAttribute('x1', n.x); ep.line.setAttribute('y1', n.y); }
+        if (ep.edge.target === n) { ep.line.setAttribute('x2', n.x); ep.line.setAttribute('y2', n.y); }
+      });
+    });
+    window.addEventListener('mouseup', function() { dragging = false; });
+    g.addEventListener('click', function(ev) { ev.stopPropagation(); selectNode(n); });
+  });
+
+  svg.addEventListener('click', clearSelection);
+
+  let scale = 1, tx = 0, ty = 0, panning = false, panStart = null;
+  function applyTransform() {
+    viewport.setAttribute('transform', 'translate(' + tx + ',' + ty + ') scale(' + scale + ')');
+  }
+  svg.addEventListener('mousedown', function(ev) {
+    if (ev.target === svg) { panning = true; panStart = { x: ev.clientX - tx, y: ev.clientY - ty }; }
+  });
+  window.addEventListener('mousemove', function(ev) {
+    if (panning) { tx = ev.clientX - panStart.x; ty = ev.clientY - panStart.y; applyTransform(); }
+  });
+  window.addEventListener('mouseup', function() { panning = false; });
+  svg.addEventListener('wheel', function(ev) {
+    ev.preventDefault();
+    scale = Math.max(0.3, Math.min(3, scale * (ev.deltaY < 0 ? 1.1 : 0.9)));
+    applyTransform();
+  }, { passive: false });
+})();
+"""
+
+
+def _render_citation_network_section(network: dict) -> str:
+    nodes = network.get("nodes") or []
+    if not nodes:
+        return (
+            '<div class="viz-section"><p class="viz-none">No citation data yet — re-run '
+            "<code>index-library --fetch-references</code> to build this.</p></div>"
+        )
+
+    payload = {"nodes": [_network_node_payload(n) for n in nodes], "edges": network.get("edges") or []}
+    # `</` inside a title (extremely unlikely, but titles are arbitrary text)
+    # could otherwise close the <script> tag early.
+    graph_json = _json.dumps(payload).replace("</", "<\\/")
+
+    legend = """
+    <div class="viz-graph-legend">
+      <span><span class="viz-graph-dot" style="background:#0ca30c"></span> Verified, in your library</span>
+      <span><span class="viz-graph-dot" style="background:#fab219"></span> Unresolved, in your library</span>
+      <span><span class="viz-graph-dot" style="background:#898781"></span> Cited by 2+ papers, missing (bigger = cited more)</span>
+    </div>
+    """
+
+    return f"""
+    <div class="viz-section">
+      <p class="viz-muted">Drag the background to pan, scroll to zoom, drag a node to reposition it, click a node for details and links.</p>
+      {legend}
+      <svg id="viz-graph-svg" viewBox="0 0 640 480" class="viz-graph-svg" role="img" aria-label="citation network">
+        <g id="viz-graph-viewport"></g>
+      </svg>
+      <div id="viz-graph-info" class="viz-graph-info"><span class="viz-muted">Click a node to see details and links.</span></div>
+    </div>
+    <script>
+    const GRAPH_DATA = {graph_json};
+    {_GRAPH_JS}
+    </script>
+    """
 
 
 def _frequently_missing_table(frequently_missing: List[dict]) -> str:

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from typing import Dict, List
 
+from ..sources.base import normalize_title
 from .index_store import LibraryEntry
 
 MAX_MISSING_NODES = 15
@@ -61,6 +62,102 @@ def build_coverage(entries: List[LibraryEntry]) -> dict:
         "missing_references": total - included,
         "frequently_missing": frequently_missing,
     }
+
+
+def _entry_node_id(entry: LibraryEntry) -> str:
+    doi = (entry.doi or entry.paper.doi or "").strip().lower()
+    return f"doi:{doi}" if doi else f"title:{normalize_title(entry.paper.title)}"
+
+
+def _gap_node_id(gap: dict) -> str:
+    doi = (gap.get("doi") or "").strip().lower()
+    return f"doi:{doi}" if doi else f"title:{normalize_title(gap.get('title') or '')}"
+
+
+def build_citation_network(entries: List[LibraryEntry], coverage: dict) -> dict:
+    """A graph of who-cites-whom, for an interactive "citation network" view
+    (as opposed to build_coverage's plain totals): every indexed paper is a
+    node, plus a "gap" node for each frequently-missing reference already
+    surfaced by build_coverage (same threshold — cited by 2+ of your
+    papers — so this view and the Markdown report's mind-map agree). An
+    edge means "source cites target": either one indexed paper citing
+    another (the interesting case — reveals your own library's internal
+    citation structure) or an indexed paper citing a gap.
+
+    References cited by only one paper and not themselves indexed are
+    deliberately left out — with hundreds of one-off references in a
+    typical library, including every single one would make the graph
+    unreadable rather than more informative.
+    """
+    known_dois = indexed_dois(entries)
+
+    nodes: List[dict] = []
+    node_ids: Dict[str, int] = {}
+
+    def add_node(node: dict) -> None:
+        node_ids[node["id"]] = len(nodes)
+        nodes.append(node)
+
+    for entry in entries:
+        node_id = _entry_node_id(entry)
+        if node_id in node_ids:
+            continue  # two files resolved to the same paper (a duplicate) — one node is enough
+        add_node(
+            {
+                "id": node_id,
+                "kind": "indexed",
+                "title": entry.paper.title,
+                "year": entry.paper.year,
+                "confidence": entry.confidence,
+                "doi": entry.doi or entry.paper.doi,
+                "file_path": entry.file_path,
+            }
+        )
+
+    gap_ids_by_title: Dict[str, str] = {}
+    for gap in coverage["frequently_missing"]:
+        node_id = _gap_node_id(gap)
+        if node_id in node_ids:
+            continue  # already indexed under this DOI/title — not actually a gap
+        gap_ids_by_title[gap["title"]] = node_id
+        add_node(
+            {
+                "id": node_id,
+                "kind": "gap",
+                "title": gap["title"],
+                "year": gap.get("year"),
+                "confidence": None,
+                "doi": gap.get("doi"),
+                "cited_by_count": len(gap["cited_by"]),
+            }
+        )
+
+    edges: List[dict] = []
+    seen_edges = set()
+
+    def add_edge(source: str, target: str) -> None:
+        if source == target:
+            return
+        key = (source, target)
+        if key in seen_edges:
+            return
+        seen_edges.add(key)
+        edges.append({"source": source, "target": target})
+
+    for entry in entries:
+        source = _entry_node_id(entry)
+        for ref in entry.references:
+            doi = (ref.get("doi") or "").strip().lower()
+            if doi and doi in known_dois:
+                target = f"doi:{doi}"
+                if target in node_ids:
+                    add_edge(source, target)
+                continue
+            target = gap_ids_by_title.get(ref.get("title"))
+            if target:
+                add_edge(source, target)
+
+    return {"nodes": nodes, "edges": edges}
 
 
 def _short_label(title: str, year, max_len: int = 40) -> str:
