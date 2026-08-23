@@ -189,3 +189,58 @@ def test_arxiv_returns_empty_on_bad_xml(mock_get):
     mock_get.return_value = _mock_response(content=b"not xml")
     results = ArxivClient().search("sleep cognition")
     assert results == []
+
+
+def _mock_429_response(retry_after=None):
+    resp = MagicMock()
+    resp.status_code = 429
+    resp.headers = {"Retry-After": retry_after} if retry_after else {}
+    return resp
+
+
+@patch("thesis_tools.sources.semantic_scholar.time.sleep")
+@patch("thesis_tools.sources.semantic_scholar.requests.get")
+def test_semantic_scholar_retries_once_on_429_then_succeeds(mock_get, mock_sleep):
+    success = _mock_response(json_data={"data": [{"title": "Sleep and Cognition", "year": 2021}]})
+    mock_get.side_effect = [_mock_429_response(retry_after="2"), success]
+
+    results = SemanticScholarClient().search("sleep cognition")
+
+    assert mock_get.call_count == 2
+    mock_sleep.assert_called_once_with(2.0)
+    assert len(results) == 1
+    assert results[0].title == "Sleep and Cognition"
+
+
+@patch("thesis_tools.sources.semantic_scholar.time.sleep")
+@patch("thesis_tools.sources.semantic_scholar.requests.get")
+def test_semantic_scholar_gives_up_after_max_retries(mock_get, mock_sleep):
+    mock_get.side_effect = [_mock_429_response(), _mock_429_response(), _mock_429_response()]
+
+    results = SemanticScholarClient().search("sleep cognition")
+
+    # 1 initial attempt + MAX_RETRIES retries, then give up gracefully.
+    assert mock_get.call_count == 3
+    assert results == []
+
+
+@patch("thesis_tools.sources.semantic_scholar.time.sleep")
+@patch("thesis_tools.sources.semantic_scholar.requests.get")
+def test_semantic_scholar_retry_falls_back_to_backoff_without_retry_after_header(mock_get, mock_sleep):
+    success = _mock_response(json_data={"data": []})
+    mock_get.side_effect = [_mock_429_response(retry_after=None), success]
+
+    SemanticScholarClient().search("sleep cognition")
+
+    mock_sleep.assert_called_once_with(1.5)
+
+
+@patch("thesis_tools.sources.semantic_scholar.time.sleep")
+@patch("thesis_tools.sources.semantic_scholar.requests.get")
+def test_semantic_scholar_retry_caps_backoff_at_max(mock_get, mock_sleep):
+    success = _mock_response(json_data={"data": []})
+    mock_get.side_effect = [_mock_429_response(retry_after="9999"), success]
+
+    SemanticScholarClient().search("sleep cognition")
+
+    mock_sleep.assert_called_once_with(10.0)

@@ -56,7 +56,14 @@ together cover essentially the same ground for a novelty check:
 | [arXiv](https://arxiv.org/) | Preprints in CS / physics / math / stats |
 
 If your field isn't STEM, arXiv will just return nothing for it — that's
-expected and handled gracefully. When neither of the above can verify
+expected and handled gracefully. Semantic Scholar's unauthenticated tier
+shares a strict, global rate limit, so a `429` from it is routine rather
+than a sign of trouble — the client retries a couple of times with backoff
+before giving up and just proceeding with whatever the other three sources
+found. It's also normal for the same query against different sources to
+turn up zero overlap after de-duplication: each runs its own relevance
+ranking over a different corpus, so their top results genuinely don't have
+to intersect. When neither of the above can verify
 something (see Part 2's "Needs manual review"), the report hands you a
 pre-filled **Google Scholar** / **ScienceDirect** search link instead — not an
 API call, just a deep link, so you can finish the check by hand in one click.

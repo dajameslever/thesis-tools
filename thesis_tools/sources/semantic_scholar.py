@@ -1,11 +1,16 @@
 """Semantic Scholar Graph API client (no API key required for light use).
 
 Docs: https://api.semanticscholar.org/api-docs/graph
+
+The unauthenticated tier shares a strict, global rate limit across everyone
+using it without an API key, so a 429 here is routine, not exceptional —
+worth one or two short retries before giving up on this source for the run.
 """
 
 from __future__ import annotations
 
 import sys
+import time
 from typing import List, Optional
 
 import requests
@@ -16,6 +21,29 @@ SEARCH_URL = "https://api.semanticscholar.org/graph/v1/paper/search"
 LOOKUP_URL = "https://api.semanticscholar.org/graph/v1/paper/DOI:{doi}"
 REFERENCES_URL = "https://api.semanticscholar.org/graph/v1/paper/DOI:{doi}/references"
 FIELDS = "title,abstract,year,authors,venue,externalIds,url,citationCount"
+
+MAX_RETRIES = 2
+BASE_BACKOFF_SECONDS = 1.5
+MAX_BACKOFF_SECONDS = 10.0
+
+
+def _get_with_retry(url: str, params: dict, timeout: int) -> requests.Response:
+    """GET with a couple of short, bounded retries on 429 — respecting the
+    server's Retry-After header when it sends one, otherwise a small
+    increasing backoff. Any other status/exception is left for the caller
+    to handle (e.g. via raise_for_status())."""
+    resp = requests.get(url, params=params, timeout=timeout)
+    attempt = 0
+    while resp.status_code == 429 and attempt < MAX_RETRIES:
+        retry_after = resp.headers.get("Retry-After")
+        try:
+            delay = float(retry_after) if retry_after else BASE_BACKOFF_SECONDS * (attempt + 1)
+        except ValueError:
+            delay = BASE_BACKOFF_SECONDS * (attempt + 1)
+        time.sleep(min(delay, MAX_BACKOFF_SECONDS))
+        attempt += 1
+        resp = requests.get(url, params=params, timeout=timeout)
+    return resp
 
 
 def _parse_item(item: dict) -> Optional[Paper]:
@@ -44,10 +72,10 @@ class SemanticScholarClient(SourceClient):
 
     def search(self, query: str, limit: int = 15) -> List[Paper]:
         try:
-            resp = requests.get(
+            resp = _get_with_retry(
                 SEARCH_URL,
-                params={"query": query, "limit": limit, "fields": FIELDS},
-                timeout=self.timeout,
+                {"query": query, "limit": limit, "fields": FIELDS},
+                self.timeout,
             )
             resp.raise_for_status()
             data = resp.json()
@@ -65,11 +93,7 @@ class SemanticScholarClient(SourceClient):
     def lookup_doi(self, doi: str) -> Optional[Paper]:
         """Fetch a single paper by DOI. Returns None if not found or on error."""
         try:
-            resp = requests.get(
-                LOOKUP_URL.format(doi=doi),
-                params={"fields": FIELDS},
-                timeout=self.timeout,
-            )
+            resp = _get_with_retry(LOOKUP_URL.format(doi=doi), {"fields": FIELDS}, self.timeout)
             if resp.status_code == 404:
                 return None
             resp.raise_for_status()
@@ -84,11 +108,7 @@ class SemanticScholarClient(SourceClient):
         view (which of a paper's own references are already in your library).
         Returns [] on any error rather than raising, same as search()."""
         try:
-            resp = requests.get(
-                REFERENCES_URL.format(doi=doi),
-                params={"fields": FIELDS, "limit": limit},
-                timeout=self.timeout,
-            )
+            resp = _get_with_retry(REFERENCES_URL.format(doi=doi), {"fields": FIELDS, "limit": limit}, self.timeout)
             if resp.status_code == 404:
                 return []
             resp.raise_for_status()
