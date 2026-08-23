@@ -59,7 +59,9 @@ def _build_query_text(inputs: TopicFinderInputs) -> str:
     return ". ".join(p for p in parts if p)
 
 
-def _cache_path_for(output_path: Path) -> Path:
+def cache_path_for(output_path: Path) -> Path:
+    """The <report>.papers.json path for a given report path — deterministic,
+    so callers (the CLI, Part 3) can find it without being told."""
     return Path(str(output_path) + ".papers.json")
 
 
@@ -72,9 +74,41 @@ def _load_cache(path: Path) -> tuple:
     return papers, sources_used
 
 
-def _save_cache(path: Path, papers: List[Paper], sources_used: List[str]) -> None:
+def load_cache_metadata(path: Path) -> dict:
+    """Everything about a run *except* the paper list itself — used by the
+    CLI to learn which sub-questions actually ended up being used (including
+    any Claude auto-generated ones) without changing run_topic_finder's
+    return type."""
+    if not Path(path).is_file():
+        return {}
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {}
+    return {k: v for k, v in data.items() if k != "papers"}
+
+
+def _save_cache(
+    path: Path,
+    papers: List[Paper],
+    sources_used: List[str],
+    *,
+    field: str,
+    working_title: str,
+    research_question: Optional[str],
+    sub_questions: List[str],
+    style: str,
+) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    payload = {"sources_used": sources_used, "papers": [asdict(p) for p in papers]}
+    payload = {
+        "field": field,
+        "working_title": working_title,
+        "research_question": research_question,
+        "sub_questions": sub_questions,
+        "style": style,
+        "sources_used": sources_used,
+        "papers": [asdict(p) for p in papers],
+    }
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
@@ -158,8 +192,17 @@ def run_topic_finder(inputs: TopicFinderInputs) -> str:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(report_text, encoding="utf-8")
 
-    cache_path = _cache_path_for(output_path)
-    _save_cache(cache_path, deduped, sources_to_use)
+    cache_path = cache_path_for(output_path)
+    _save_cache(
+        cache_path,
+        deduped,
+        sources_to_use,
+        field=inputs.field,
+        working_title=inputs.working_title,
+        research_question=inputs.research_question,
+        sub_questions=sub_questions,
+        style=inputs.style,
+    )
     print(
         f"Saved {len(deduped)} paper(s) to {cache_path} — change --sub-questions/--style and pass "
         f"--reanalyze {cache_path} to update the report without re-searching.",

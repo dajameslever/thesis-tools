@@ -90,6 +90,19 @@ class SubquestionAnalysis:
                 grouped[stance.stance].append(self.paper_titles[key])
         return grouped
 
+    def grouped_papers(self, question: str, papers: List[Paper]) -> Dict[str, List[Paper]]:
+        """Like titles_by_stance, but returns the actual Paper objects (keyed
+        safely by Paper.key(), so identical titles never collide) — used by
+        Part 3 to pull abstracts/authors/years for synthesis, not just names."""
+        by_key = {p.key(): p for p in papers}
+        grouped: Dict[str, List[Paper]] = {"supports": [], "challenges": [], "mixed": []}
+        for key, stances in self.stances.items():
+            stance = stances.get(question)
+            paper = by_key.get(key)
+            if stance and paper and stance.stance in grouped:
+                grouped[stance.stance].append(paper)
+        return grouped
+
     def tensions(self) -> Dict[str, Dict[str, List[str]]]:
         """Sub-questions where at least one paper supports and at least one
         challenges — i.e. the literature disagrees with itself. Returns

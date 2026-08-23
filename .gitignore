@@ -8,4 +8,5 @@ output/*.md
 output/*.papers.json
 !output/.gitkeep
 /library/
+/thesis_tools_project.json
 .env
