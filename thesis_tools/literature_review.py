@@ -88,7 +88,7 @@ _INTRO_SYSTEM_PROMPT = (
     "Write a short academic-style introduction (3-5 sentences) for a literature review, framing "
     "why the student's research question matters and what the review covers. Do not invent any "
     "facts, findings, statistics, or citations here — this paragraph only frames motivation and "
-    "scope. No citations in this paragraph."
+    "scope. No citations in this paragraph.\n\n" + llm.ACADEMIC_STYLE_NOTE
 )
 
 
@@ -145,7 +145,8 @@ _SYNTHESIS_SYSTEM_PROMPT = (
     "- Write in formal academic prose — full sentences and paragraphs, not bullet points.\n"
     "- Text extracted from PDFs can contain minor artifacts (broken hyphenation, odd line breaks, "
     "OCR noise) — if a passage looks garbled, paraphrase instead of quoting it.\n"
-    "- If the material given doesn't really address the sub-question, say that plainly instead of stretching."
+    "- If the material given doesn't really address the sub-question, say that plainly instead of stretching.\n\n"
+    + llm.ACADEMIC_STYLE_NOTE
 )
 
 
@@ -209,7 +210,8 @@ _GAPS_SYSTEM_PROMPT = (
     "Write a short 'gaps and tensions' paragraph (100-180 words) for the closing synthesis section "
     "of a literature review, given (1) sub-questions where the papers found disagree with each "
     "other, and (2) sub-questions with no supporting literature at all. Frame these as opportunities "
-    "for the student's own thesis contribution. Invent nothing beyond what is given."
+    "for the student's own thesis contribution. Invent nothing beyond what is given.\n\n"
+    + llm.ACADEMIC_STYLE_NOTE
 )
 
 
@@ -247,6 +249,11 @@ def run_literature_review(inputs: LiteratureReviewInputs) -> str:
         raise ValueError(f"Unknown citation style '{inputs.style}'. Choose from: {', '.join(STYLES)}")
     if not inputs.sub_questions:
         raise ValueError("No sub-questions to draft around. Run topic-finder first, or pass --sub-questions.")
+
+    if inputs.use_llm:
+        issue = llm.availability_issue()
+        if issue:
+            print(f"Claude requested but unavailable ({issue}) — using a heuristic outline for this run.", file=sys.stderr)
 
     papers = _load_all_papers(inputs.paper_sources)
     if not papers:

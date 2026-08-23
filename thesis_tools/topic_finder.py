@@ -9,6 +9,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import List, Optional
 
+from . import llm
 from .citations import STYLES
 from .dedupe import dedupe_papers
 from .relevance import keywords_from_text, score_relevance, title_similarity
@@ -116,6 +117,11 @@ def run_topic_finder(inputs: TopicFinderInputs) -> str:
     """Run the full pipeline and return the path to the written report."""
     if inputs.style.lower() not in STYLES:
         raise ValueError(f"Unknown citation style '{inputs.style}'. Choose from: {', '.join(STYLES)}")
+
+    if inputs.use_llm_summaries:
+        issue = llm.availability_issue()
+        if issue:
+            print(f"Claude requested but unavailable ({issue}) — using heuristics for this run.", file=sys.stderr)
 
     query_text = _build_query_text(inputs)
     keywords = keywords_from_text(query_text)

@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Iterator, List, Optional
 
+from .. import llm
 from ..citations import STYLES
 from ..relevance import score_relevance
 from ..subquestions import analyze_subquestions
@@ -64,6 +65,11 @@ def run_library_indexer(inputs: LibraryIndexerInputs) -> Dict[str, object]:
 
     if inputs.style.lower() not in STYLES:
         raise ValueError(f"Unknown citation style '{inputs.style}'. Choose from: {', '.join(STYLES)}")
+
+    if inputs.use_llm:
+        issue = llm.availability_issue()
+        if issue:
+            print(f"Claude requested but unavailable ({issue}) — using heuristics for this run.", file=sys.stderr)
 
     extensions = _normalize_extensions(inputs.extensions)
     index_path = Path(inputs.index_path)

@@ -299,3 +299,30 @@ def test_synthesis_caps_papers_per_call(mock_ask, mock_get_client, tmp_path, mon
     text = output_path.read_text()
     cited_count = sum(1 for p in papers if f"10.1/{papers.index(p)}" in text)
     assert cited_count <= MAX_PAPERS_PER_SYNTHESIS_CALL
+
+
+def test_run_literature_review_prints_one_llm_notice(tmp_path, monkeypatch, capsys):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    papers = [
+        Paper(title=f"Paper {i}", year=2020, authors=[f"Author{i}"], doi=f"10.1/{i}", abstract="An abstract about sleep and cognition.")
+        for i in range(5)
+    ]
+    cache_path = tmp_path / "report.md.papers.json"
+    _write_topic_cache(cache_path, papers)
+
+    output_path = tmp_path / "review.md"
+    inputs = LiteratureReviewInputs(
+        field="Psychology",
+        working_title="Sleep and Cognition",
+        research_question="Does sleep affect cognition?",
+        sub_questions=["Does sleep affect cognition?"],
+        paper_sources=[str(cache_path)],
+        output_path=str(output_path),
+        use_llm=True,
+        min_relevance=0.0,
+    )
+    run_literature_review(inputs)
+
+    stderr = capsys.readouterr().err
+    assert stderr.count("ANTHROPIC_API_KEY not set") == 1
+    assert "Claude requested but unavailable" in stderr

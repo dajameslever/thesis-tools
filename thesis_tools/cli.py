@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Optional
 
 from . import env as _env
+from . import llm
 from .citations import STYLES
 from .library.library_indexer import LibraryIndexerInputs, run_library_indexer
 from .literature_review import LiteratureReviewInputs, run_literature_review
@@ -78,16 +79,23 @@ def _default_use_llm(project: ProjectState) -> bool:
 
 
 def _ensure_anthropic_key_interactive() -> bool:
-    """If the user wants Claude's help but no key is anywhere to be found,
-    offer to collect one right now instead of silently degrading to
-    heuristics for the whole run. Returns True iff a key ends up available.
+    """If the user wants Claude's help, make sure it's actually usable right
+    now — offering to collect a key if none is found — instead of silently
+    degrading to heuristics for the whole run (with a confusing warning
+    repeated for every paper). Returns True iff Claude ends up usable.
 
     The key is kept in-memory for this process; saving it to disk is a
     separate, explicit opt-in (to a local .env, which is gitignored — never
     to the shared project file, which is meant to be inspected/shared)."""
-    _env.load_dotenv_once()
-    if os.environ.get("ANTHROPIC_API_KEY"):
+    issue = llm.availability_issue()
+    if issue is None:
         return True
+
+    if "ANTHROPIC_API_KEY" not in issue:
+        # A key is already set; the package itself is the problem, and no
+        # amount of prompting for a key fixes that.
+        print(f"Claude isn't usable right now: {issue}. Continuing without it for this run.\n")
+        return False
 
     print("No ANTHROPIC_API_KEY found (checked the environment and a local .env file).")
     key = getpass.getpass("Paste your Anthropic API key to use it for this run (input hidden, or press Enter to skip): ").strip()
@@ -100,6 +108,11 @@ def _ensure_anthropic_key_interactive() -> bool:
     if _prompt("Save this key to a local .env file (gitignored, never sent anywhere) so you don't paste it again? (Y/n)", default="y").lower().startswith("y"):
         _env.save_to_dotenv("ANTHROPIC_API_KEY", key)
         print("Saved to .env — future runs will pick it up automatically.\n")
+
+    issue = llm.availability_issue()
+    if issue:
+        print(f"Key saved, but Claude still isn't usable: {issue}. Continuing without it for this run.\n")
+        return False
     return True
 
 
@@ -269,7 +282,7 @@ def _build_parser() -> argparse.ArgumentParser:
     tf.add_argument("--limit", type=int, default=15, help="Max results to request per source (default: 15)")
     tf.add_argument("--top", type=int, default=20, help="Max papers to include in the final report (default: 20)")
     tf.add_argument("--min-relevance", type=float, default=0.12, help="Drop papers scoring below this relevance (0-1, default: 0.12)")
-    tf.add_argument("--llm-summaries", action="store_true", help="Use Claude for paper summaries, sub-question generation, and stance analysis (needs ANTHROPIC_API_KEY + `pip install anthropic`)")
+    tf.add_argument("--llm-summaries", action="store_true", help="Use Claude for paper summaries, sub-question generation, and stance analysis (needs ANTHROPIC_API_KEY)")
     tf.add_argument("--llm-model", default=None, help="Model to use for --llm-summaries (default: claude-sonnet-5, or your saved project model)")
     tf.add_argument(
         "--sub-questions",
@@ -309,7 +322,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Semicolon-separated sub-questions to check indexed papers against (default: whatever Part 1 already used). "
         "Re-running with different sub-questions updates relevance/stances without re-scanning files.",
     )
-    il.add_argument("--llm-summaries", action="store_true", help="Use Claude for paper summaries and stance analysis (needs ANTHROPIC_API_KEY + `pip install anthropic`)")
+    il.add_argument("--llm-summaries", action="store_true", help="Use Claude for paper summaries and stance analysis (needs ANTHROPIC_API_KEY)")
     il.add_argument("--llm-model", default=None, help="Model to use for --llm-summaries")
     il.add_argument("--contact-email", help="Optional email sent to Crossref's 'polite pool' for faster, more reliable responses")
     il.add_argument("--project-file", default=DEFAULT_PROJECT_PATH, help=f"Where shared project state lives (default: {DEFAULT_PROJECT_PATH}) — read to reuse Part 1's question/sub-questions/style automatically")

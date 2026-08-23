@@ -5,8 +5,9 @@ Two modes:
     sentence(s) from the abstract with the most keyword overlap with the
     user's proposed topic.
   * llm (optional, `--llm-summaries`): asks Claude to write a short, topic-
-    aware summary. Requires `pip install anthropic` and an ANTHROPIC_API_KEY
-    environment variable. Falls back to extractive if either is missing.
+    aware summary. Requires an ANTHROPIC_API_KEY environment variable (the
+    `anthropic` package itself is a core dependency). Falls back to
+    extractive if the key is missing.
 """
 
 from __future__ import annotations
@@ -47,15 +48,19 @@ def extractive_summary(abstract: Optional[str], query_text: str, max_sentences: 
 
 _LLM_SYSTEM_PROMPT = (
     "You summarize academic abstracts for a student who is scoping a thesis topic. "
-    "In 1-2 plain sentences, say what the paper actually did/found and how it relates "
-    "to the student's proposed topic. Be concrete, no filler, no restating the question."
+    "In 1-2 sentences, say what the paper actually did/found and how it relates "
+    "to the student's proposed topic. Be concrete, no filler, no restating the question.\n\n"
+    + llm.ACADEMIC_STYLE_NOTE
 )
 
 
 def llm_summary(abstract: Optional[str], title: str, query_text: str, model: str = "claude-sonnet-5") -> Optional[str]:
     if not abstract:
         return None
-    client = llm.get_client()
+    # quiet=True: this runs once per paper, so the caller checks
+    # llm.availability_issue() up front and prints one notice instead of
+    # this repeating the same warning for every paper.
+    client = llm.get_client(quiet=True)
     if client is None:
         return None
     user_message = f"Student's proposed thesis topic: {query_text}\n\nPaper title: {title}\nAbstract: {abstract}"

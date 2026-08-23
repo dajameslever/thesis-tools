@@ -78,11 +78,11 @@ instead of OpenSSL, which is common for macOS system/Homebrew Python, `urllib3`
 2.x prints a `NotOpenSSLWarning` on every run; 1.x has no such check and works
 identically here.)
 
-For Claude-drafted summaries, sub-question suggestions, stance analysis, and
-literature-review prose instead of the built-in heuristics: `pip install
-anthropic` and set `ANTHROPIC_API_KEY`. When a key is present, every
-interactive prompt defaults to "yes, use Claude" — you don't have to
-remember to opt in.
+The `anthropic` package is installed by default (it's in `requirements.txt`),
+so Claude-drafted summaries, sub-question suggestions, stance analysis, and
+literature-review prose are available the moment you set `ANTHROPIC_API_KEY`
+— no separate install step. When a key is present, every interactive prompt
+defaults to "yes, use Claude" — you don't have to remember to opt in.
 
 You don't have to set the environment variable yourself: if you answer "yes"
 to using Claude in an interactive prompt and no key is found, the tool asks

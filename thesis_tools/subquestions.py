@@ -120,7 +120,8 @@ _SUBQUESTION_SYSTEM_PROMPT = (
     "You help a student scope a thesis. Given their working title and/or research "
     "question, produce exactly 3 or 4 sharper sub-questions that break the topic into "
     "testable parts. One per line, no numbering, no preamble, no explanation — just the "
-    "questions themselves."
+    "questions themselves. Phrase each as a formal academic research question (e.g. "
+    "'To what extent does X affect Y?'), not a casual or rhetorical one."
 )
 
 
@@ -128,7 +129,7 @@ def generate_subquestions(topic_text: str, model: str = "claude-sonnet-5") -> Li
     """Ask Claude for 3-4 sub-questions. Returns [] if the LLM is unavailable
     or the request fails — callers should treat that as "skip this section",
     not as an error, and the CLI lets the user supply their own instead."""
-    client = llm.get_client()
+    client = llm.get_client(quiet=True)  # caller already prints one availability notice, if needed
     if client is None:
         return []
     response = llm.ask(client, _SUBQUESTION_SYSTEM_PROMPT, topic_text, model=model, max_tokens=300)
@@ -170,7 +171,9 @@ _STANCE_SYSTEM_PROMPT = (
     "student's thesis. For EACH sub-question, reply on its own line as:\n"
     "<number>: <supports|challenges|mixed|unrelated> - <one short reason>\n"
     "\"unrelated\" means the abstract doesn't actually address that sub-question. Be strict: "
-    "only say supports/challenges when the abstract's findings genuinely bear on the question."
+    "only say supports/challenges when the abstract's findings genuinely bear on the question. "
+    "Write the reason in formal academic register — third person, no contractions — since it may "
+    "be shown directly in the student's report."
 )
 
 

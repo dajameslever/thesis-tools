@@ -124,3 +124,29 @@ def test_run_topic_finder_reanalyze_missing_cache_raises(tmp_path):
     )
     with pytest.raises(ValueError):
         run_topic_finder(inputs)
+
+
+@patch("thesis_tools.sources.crossref.CrossrefClient.search")
+@patch("thesis_tools.sources.arxiv.ArxivClient.search")
+@patch("thesis_tools.sources.openalex.OpenAlexClient.search")
+@patch("thesis_tools.sources.semantic_scholar.SemanticScholarClient.search")
+def test_run_topic_finder_prints_one_llm_notice_not_one_per_paper(mock_ss, mock_oa, mock_arxiv, mock_crossref, tmp_path, monkeypatch, capsys):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    mock_ss.return_value = [
+        Paper(title=f"Paper {i}", year=2020, abstract="An abstract with content.", doi=f"10.1/{i}")
+        for i in range(5)
+    ]
+    mock_oa.return_value = mock_arxiv.return_value = mock_crossref.return_value = []
+
+    inputs = TopicFinderInputs(
+        field="Psychology",
+        working_title="Sleep and Memory",
+        output_path=str(tmp_path / "report.md"),
+        use_llm_summaries=True,
+        min_relevance=0.0,
+    )
+    run_topic_finder(inputs)
+
+    stderr = capsys.readouterr().err
+    assert stderr.count("ANTHROPIC_API_KEY not set") == 1
+    assert "Claude requested but unavailable" in stderr

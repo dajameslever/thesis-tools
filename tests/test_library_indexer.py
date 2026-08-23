@@ -171,3 +171,35 @@ def test_run_library_indexer_report_includes_relevance_and_summary(tmp_path):
     assert "Relevance to your research question" in text
     assert "What it's about" in text
     assert "Contributors" in text
+
+
+def test_run_library_indexer_prints_one_llm_notice_not_one_per_paper(tmp_path, monkeypatch, capsys):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    downloads = tmp_path / "downloads"
+    downloads.mkdir()
+    for i in range(4):
+        (downloads / f"paper{i}.txt").write_text(f"Paper {i} body text about sleep and cognition.", encoding="utf-8")
+    index_path = tmp_path / "library" / "index.json"
+
+    call_count = {"n": 0}
+
+    def _fake_identify_many(doc, filename_fallback, **kwargs):
+        call_count["n"] += 1
+        return IdentifiedPaper(
+            paper=Paper(title=f"Paper {call_count['n']}", doi=f"10.1/{call_count['n']}", year=2020, abstract="An abstract about sleep and cognition."),
+            confidence="verified-doi",
+            matched_doi=f"10.1/{call_count['n']}",
+        )
+
+    with patch("thesis_tools.library.library_indexer.identify_document", side_effect=_fake_identify_many):
+        inputs = LibraryIndexerInputs(
+            folder=str(downloads),
+            index_path=str(index_path),
+            research_question="Does sleep affect cognition?",
+            use_llm=True,
+        )
+        run_library_indexer(inputs)
+
+    stderr = capsys.readouterr().err
+    assert stderr.count("ANTHROPIC_API_KEY not set") == 1
+    assert "Claude requested but unavailable" in stderr
