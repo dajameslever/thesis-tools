@@ -151,9 +151,9 @@ Interactive:
 python -m thesis_tools index-library
 ```
 
-Or non-interactively — if you've already run `topic-finder` in this folder,
-you can skip `--question`/`--sub-questions`/`--style` entirely and it'll
-reuse what you already told Part 1:
+Or non-interactively — if you've already run `topic-finder` or
+`thesis-tools configure` here, you can skip `--question`/`--sub-questions`/
+`--style` entirely and it'll reuse what's already saved:
 
 ```bash
 python -m thesis_tools index-library --folder ~/Downloads
@@ -251,9 +251,11 @@ section (surfacing disagreements and sub-questions with no coverage at all —
 i.e. candidate contributions for your thesis), and a reference list
 containing only the papers actually cited in the draft.
 
-> ⚠️ **This is a draft, not a citable final product.** It's synthesized from
-> abstracts, not full papers — verify every claim against the source before
-> relying on it, and rewrite it in your own voice.
+> ⚠️ **This is a draft, not a citable final product.** Claims about papers
+> Part 2 indexed locally draw on real extracted text; claims about papers
+> found only via Part 1's search draw on the abstract only. Either way,
+> verify every claim (and any quote) against the source before relying on
+> it, and rewrite it in your own voice.
 
 Run `python -m thesis_tools literature-review --help` for all options.
 
