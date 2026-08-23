@@ -126,7 +126,7 @@ _SUBQUESTION_SYSTEM_PROMPT = (
 )
 
 
-def generate_subquestions(topic_text: str, model: str = "claude-sonnet-5") -> List[str]:
+def generate_subquestions(topic_text: str, model: str = llm.DEFAULT_MODEL) -> List[str]:
     """Ask Claude for 3-4 sub-questions. Returns [] if the LLM is unavailable
     or the request fails — callers should treat that as "skip this section",
     not as an error, and the CLI lets the user supply their own instead."""
@@ -226,7 +226,7 @@ def analyze_subquestions(
     sub_questions: List[str],
     papers: List[Paper],
     use_llm: bool = False,
-    model: str = "claude-sonnet-5",
+    model: str = llm.DEFAULT_EXTRACTION_MODEL,
 ) -> SubquestionAnalysis:
     analysis = SubquestionAnalysis(sub_questions=list(sub_questions))
     if not sub_questions:

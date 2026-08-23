@@ -40,7 +40,11 @@ class LibraryIndexerInputs:
     research_question: Optional[str] = None
     sub_questions: Optional[List[str]] = None
     use_llm: bool = False
-    llm_model: str = "claude-sonnet-5"
+    # Every Claude call this command makes is bulk, per-paper work
+    # (summaries, sub-question stance classification) — no one-shot
+    # "quality" task to reserve a pricier model for, unlike Part 1's
+    # sub-question generation or Part 3's drafting. See llm.py.
+    llm_model: str = llm.DEFAULT_EXTRACTION_MODEL
     # Where each file's extracted text is also saved as a plain .txt, one per
     # paper, so you can inspect exactly what was extracted (and confirm it's
     # the whole document, not a prefix) without opening the JSON index. Same

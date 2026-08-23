@@ -124,7 +124,7 @@ def _generate_and_confirm_subquestions(working_title: str, research_question: Op
     the API spend that comes with it) happens against an unconfirmed batch."""
     print("Asking Claude to suggest sub-questions...\n")
     topic_text = f"{working_title}. {research_question}" if research_question else working_title
-    suggested = generate_subquestions(topic_text, model=project.llm_model or "claude-sonnet-5")
+    suggested = generate_subquestions(topic_text, model=project.llm_model or llm.DEFAULT_MODEL)
 
     if not suggested:
         print("Claude didn't return any sub-questions for this topic.\n")
@@ -289,7 +289,7 @@ def _interactive_library_indexer_inputs(project: ProjectState) -> LibraryIndexer
         research_question=research_question,
         sub_questions=sub_questions,
         use_llm=use_llm,
-        llm_model=project.llm_model or "claude-sonnet-5",
+        llm_model=project.llm_model or llm.DEFAULT_EXTRACTION_MODEL,
         fetch_references=fetch_references,
         contact_email=project.contact_email,
     )
@@ -330,7 +330,7 @@ def _interactive_literature_review_inputs(project: ProjectState) -> LiteratureRe
         sub_questions=sub_questions,
         paper_sources=sources,
         style=style,
-        llm_model=project.llm_model or "claude-opus-5",
+        llm_model=project.llm_model or llm.DEFAULT_MODEL,
     )
 
 
@@ -463,7 +463,13 @@ def _run_topic_finder_command(args: argparse.Namespace) -> int:
     # Explicit flag > a model the user has explicitly chosen before > this
     # part's own sensible default. Deliberately NOT persisted unless the user
     # actually passes --llm-model — see the project.updated() call below.
-    llm_model = args.llm_model or project.llm_model or "claude-sonnet-5"
+    # An explicit choice applies to everything in this run; absent one,
+    # sub-question generation (one-shot, quality-sensitive) and the bulk
+    # per-paper summaries/stance classification get different defaults —
+    # see llm.py.
+    explicit_llm_model = args.llm_model or project.llm_model
+    llm_model = explicit_llm_model or llm.DEFAULT_MODEL
+    extraction_llm_model = explicit_llm_model or llm.DEFAULT_EXTRACTION_MODEL
 
     # Only skip the interactive walkthrough when THIS invocation gives enough
     # to proceed without it: --field/--title passed directly (a scripting
@@ -504,6 +510,7 @@ def _run_topic_finder_command(args: argparse.Namespace) -> int:
             min_relevance=args.min_relevance,
             use_llm_summaries=args.llm_summaries or project.use_llm,
             llm_model=llm_model,
+            extraction_llm_model=extraction_llm_model,
             contact_email=args.contact_email or project.contact_email,
             output_path=args.output_path,
             sub_questions=_split_semicolons(args.sub_questions) or (project.sub_questions or None),
@@ -523,6 +530,7 @@ def _run_topic_finder_command(args: argparse.Namespace) -> int:
         inputs.top_n = args.top
         inputs.min_relevance = args.min_relevance
         inputs.llm_model = llm_model
+        inputs.extraction_llm_model = extraction_llm_model
         inputs.contact_email = args.contact_email or inputs.contact_email
         inputs.output_path = args.output_path
         # The interactive flow above already resolved sub-questions (asked,
@@ -566,7 +574,9 @@ def _run_topic_finder_command(args: argparse.Namespace) -> int:
 def _run_index_library_command(args: argparse.Namespace) -> int:
     project = ProjectState.load(args.project_file)
     sub_questions = _split_semicolons(args.sub_questions)
-    llm_model = args.llm_model or project.llm_model or "claude-sonnet-5"
+    # Every Claude call this command makes is bulk per-paper work — see
+    # LibraryIndexerInputs.llm_model's own comment.
+    llm_model = args.llm_model or project.llm_model or llm.DEFAULT_EXTRACTION_MODEL
 
     if args.folder:
         inputs = LibraryIndexerInputs(
@@ -648,7 +658,9 @@ def _run_visualize_library_command(args: argparse.Namespace) -> int:
     sub_questions = _split_semicolons(args.sub_questions) or list(project.sub_questions)
     research_question = args.research_question or project.research_question
     use_llm = args.llm_summaries or project.use_llm
-    llm_model = args.llm_model or project.llm_model or "claude-sonnet-5"
+    # Every Claude call this command makes is bulk per-paper stance
+    # classification — see LibraryIndexerInputs.llm_model's own comment.
+    llm_model = args.llm_model or project.llm_model or llm.DEFAULT_EXTRACTION_MODEL
     if use_llm:
         issue = llm.availability_issue()
         if issue:
@@ -681,7 +693,7 @@ def _run_literature_review_command(args: argparse.Namespace) -> int:
         research_question = args.research_question or project.research_question
         sub_questions = _split_semicolons(args.sub_questions) or list(project.sub_questions)
         style = args.style or project.style or "apa"
-        llm_model = args.llm_model or project.llm_model or "claude-opus-5"
+        llm_model = args.llm_model or project.llm_model or llm.DEFAULT_MODEL
         use_llm = not args.no_llm
 
         sources = []

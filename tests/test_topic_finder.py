@@ -284,3 +284,41 @@ def test_run_topic_finder_skips_download_when_not_opted_in(
     run_topic_finder(inputs)
 
     mock_download.assert_not_called()
+
+
+def test_topic_finder_inputs_default_model_tiers():
+    inputs = TopicFinderInputs(field="Psychology", working_title="Some Title")
+    assert inputs.llm_model == "claude-sonnet-5"
+    assert inputs.extraction_llm_model == "claude-haiku-4-5"
+
+
+@patch("thesis_tools.topic_finder.summarize")
+@patch("thesis_tools.sources.crossref.CrossrefClient.search")
+@patch("thesis_tools.sources.arxiv.ArxivClient.search")
+@patch("thesis_tools.sources.openalex.OpenAlexClient.search")
+@patch("thesis_tools.sources.semantic_scholar.SemanticScholarClient.search")
+def test_run_topic_finder_summarizes_with_extraction_model_not_llm_model(
+    mock_ss, mock_oa, mock_arxiv, mock_crossref, mock_summarize, tmp_path
+):
+    mock_ss.return_value = [Paper(title="Some Title", year=2023, abstract="An abstract.", sources=["crossref"])]
+    mock_oa.return_value = []
+    mock_arxiv.return_value = []
+    mock_crossref.return_value = []
+    mock_summarize.return_value = "a summary"
+
+    output_path = tmp_path / "report.md"
+    inputs = TopicFinderInputs(
+        field="Psychology",
+        working_title="Some Title",
+        style="apa",
+        output_path=str(output_path),
+        min_relevance=0.0,
+        llm_model="claude-sonnet-5",
+        extraction_llm_model="claude-haiku-4-5",
+    )
+
+    run_topic_finder(inputs)
+
+    mock_summarize.assert_called_once()
+    _, kwargs = mock_summarize.call_args
+    assert kwargs["model"] == "claude-haiku-4-5"

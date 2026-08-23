@@ -35,7 +35,12 @@ class TopicFinderInputs:
     top_n: int = 20
     min_relevance: float = 0.12
     use_llm_summaries: bool = False
-    llm_model: str = "claude-sonnet-5"
+    llm_model: str = llm.DEFAULT_MODEL
+    # A separate, cheaper model for the bulk per-paper work (summaries,
+    # sub-question stance classification) — llm_model itself stays reserved
+    # for the one-shot, quality-sensitive sub-question generation call. See
+    # llm.py for why these are split.
+    extraction_llm_model: str = llm.DEFAULT_EXTRACTION_MODEL
     contact_email: Optional[str] = None
     output_path: Optional[str] = None
     sub_questions: Optional[List[str]] = None
@@ -172,7 +177,7 @@ def run_topic_finder(inputs: TopicFinderInputs) -> str:
             paper.title,
             query_text,
             use_llm=inputs.use_llm_summaries,
-            model=inputs.llm_model,
+            model=inputs.extraction_llm_model,
             full_text_excerpt=paper.full_text_excerpt,
         )
         scored.append(ScoredPaper(paper=paper, relevance=relevance, title_similarity=sim, summary=summary))
@@ -210,7 +215,7 @@ def run_topic_finder(inputs: TopicFinderInputs) -> str:
             sub_questions,
             [sp.paper for sp in top],
             use_llm=inputs.use_llm_summaries,
-            model=inputs.llm_model,
+            model=inputs.extraction_llm_model,
         )
 
     report_text = build_report(

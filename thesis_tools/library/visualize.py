@@ -17,6 +17,7 @@ import html as _html
 import json as _json
 from typing import Dict, List, Optional, Tuple
 
+from .. import llm
 from ..links import doi_url, google_scholar_search_url, sciencedirect_search_url
 from ..recency import DEFAULT_OLD_THRESHOLD_YEARS, age_years, newest_year
 from ..relevance import score_relevance
@@ -64,7 +65,7 @@ def compute_stats(
     index: LibraryIndex,
     sub_questions: Optional[List[str]] = None,
     use_llm: bool = False,
-    llm_model: str = "claude-sonnet-5",
+    llm_model: str = llm.DEFAULT_EXTRACTION_MODEL,
     research_question: Optional[str] = None,
 ) -> dict:
     """Pure computation over an already-loaded index — no I/O, easy to unit
@@ -897,7 +898,7 @@ def build_visualization_html(
     index: LibraryIndex,
     sub_questions: Optional[List[str]] = None,
     use_llm: bool = False,
-    llm_model: str = "claude-sonnet-5",
+    llm_model: str = llm.DEFAULT_EXTRACTION_MODEL,
     research_question: Optional[str] = None,
 ) -> str:
     """Convenience entry point used by the CLI: compute + render in one call."""

@@ -50,10 +50,9 @@ class LiteratureReviewInputs:
     paper_sources: List[str]  # paths to Part 1 <report>.papers.json and/or Part 2 library/index.json
     style: str = "apa"
     use_llm: bool = True
-    # Defaults to the more capable model, not Sonnet: this is the one part of
-    # the toolkit whose output is meant to be well-written, citable prose,
-    # not a classification/summarization pass — worth the extra cost.
-    llm_model: str = "claude-opus-5"
+    # Sonnet by default — pass --llm-model claude-opus-5 explicitly if the
+    # extra cost is worth it for a particular draft.
+    llm_model: str = llm.DEFAULT_MODEL
     min_relevance: float = 0.1
     output_path: Optional[str] = None
 

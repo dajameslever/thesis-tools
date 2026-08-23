@@ -381,3 +381,8 @@ def test_run_library_indexer_announces_summary_scoring_phase(tmp_path, capsys):
 
     err = capsys.readouterr().err
     assert "Scoring relevance and building summaries for 1 paper(s) in the index" in err
+
+
+def test_library_indexer_inputs_default_model_is_haiku():
+    inputs = LibraryIndexerInputs(folder="/tmp/does-not-matter")
+    assert inputs.llm_model == "claude-haiku-4-5"

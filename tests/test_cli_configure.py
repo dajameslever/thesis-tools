@@ -116,3 +116,69 @@ def test_topic_finder_non_interactive_uses_configured_field_and_title(tmp_path, 
     assert "**Field:** Psychology" in text
     assert "**Proposed working title:** Sleep and Memory" in text
     assert "**Citation style:** IEEE" in text
+
+
+def test_topic_finder_explicit_llm_model_overrides_both_tiers(tmp_path, monkeypatch):
+    """An explicit --llm-model must apply to sub-question generation AND the
+    bulk per-paper work alike — the cheaper Haiku default for the latter is
+    only the automatic choice when nothing was explicitly requested."""
+    from unittest.mock import patch
+
+    from thesis_tools.topic_finder import TopicFinderInputs
+
+    monkeypatch.chdir(tmp_path)
+    project_file = tmp_path / "thesis_tools_project.json"
+
+    captured = {}
+    original_init = TopicFinderInputs.__init__
+
+    def _capture_init(self, *args, **kwargs):
+        captured.update(kwargs)
+        original_init(self, *args, **kwargs)
+
+    with patch("thesis_tools.sources.semantic_scholar.SemanticScholarClient.search", return_value=[]), \
+         patch("thesis_tools.sources.openalex.OpenAlexClient.search", return_value=[]), \
+         patch("thesis_tools.sources.crossref.CrossrefClient.search", return_value=[]), \
+         patch("thesis_tools.sources.arxiv.ArxivClient.search", return_value=[]), \
+         patch.object(TopicFinderInputs, "__init__", _capture_init):
+        rc = main([
+            "topic-finder",
+            "--field", "Psychology",
+            "--title", "Sleep and Memory",
+            "--llm-model", "claude-opus-5",
+            "--project-file", str(project_file),
+        ])
+    assert rc == 0
+    assert captured["llm_model"] == "claude-opus-5"
+    assert captured["extraction_llm_model"] == "claude-opus-5"
+
+
+def test_topic_finder_default_model_tiers_without_explicit_override(tmp_path, monkeypatch):
+    from unittest.mock import patch
+
+    from thesis_tools.topic_finder import TopicFinderInputs
+
+    monkeypatch.chdir(tmp_path)
+    project_file = tmp_path / "thesis_tools_project.json"
+
+    captured = {}
+    original_init = TopicFinderInputs.__init__
+
+    def _capture_init(self, *args, **kwargs):
+        captured.update(kwargs)
+        original_init(self, *args, **kwargs)
+
+    with patch("thesis_tools.sources.semantic_scholar.SemanticScholarClient.search", return_value=[]), \
+         patch("thesis_tools.sources.openalex.OpenAlexClient.search", return_value=[]), \
+         patch("thesis_tools.sources.crossref.CrossrefClient.search", return_value=[]), \
+         patch("thesis_tools.sources.arxiv.ArxivClient.search", return_value=[]), \
+         patch.object(TopicFinderInputs, "__init__", _capture_init):
+        rc = main([
+            "topic-finder",
+            "--field", "Psychology",
+            "--title", "Sleep and Memory",
+            "--project-file", str(project_file),
+        ])
+    assert rc == 0
+    assert captured["llm_model"] == "claude-sonnet-5"
+    assert captured["extraction_llm_model"] == "claude-haiku-4-5"

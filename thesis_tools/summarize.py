@@ -60,7 +60,7 @@ _LLM_SYSTEM_PROMPT = (
 MAX_TEXT_CHARS_FOR_SUMMARY_PROMPT = 6000
 
 
-def llm_summary(text: Optional[str], title: str, query_text: str, model: str = "claude-sonnet-5", is_abstract: bool = True) -> Optional[str]:
+def llm_summary(text: Optional[str], title: str, query_text: str, model: str = llm.DEFAULT_EXTRACTION_MODEL, is_abstract: bool = True) -> Optional[str]:
     if not text:
         return None
     # quiet=True: this runs once per paper, so the caller checks
@@ -82,7 +82,7 @@ def summarize(
     title: str,
     query_text: str,
     use_llm: bool = False,
-    model: str = "claude-sonnet-5",
+    model: str = llm.DEFAULT_EXTRACTION_MODEL,
     full_text_excerpt: Optional[str] = None,
 ) -> Optional[str]:
     # Most locally-indexed PDFs have no machine-readable abstract field at

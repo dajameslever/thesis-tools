@@ -115,3 +115,11 @@ def test_ask_returns_untrimmed_when_no_sentence_boundary_found():
     result = llm.ask(client, "sys", "user")
 
     assert result == "a fragment with no punctuation at all"
+
+
+def test_default_model_constants_are_the_intended_tiers():
+    # Regression: much of the API usage was Opus when it should have been
+    # Sonnet, and the bulk per-paper work (summaries, stance classification)
+    # is a better fit for the cheaper/faster Haiku than for Sonnet or Opus.
+    assert llm.DEFAULT_MODEL == "claude-sonnet-5"
+    assert llm.DEFAULT_EXTRACTION_MODEL == "claude-haiku-4-5"

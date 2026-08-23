@@ -35,6 +35,25 @@ to set your Claude preference explicitly. Every later `topic-finder`,
 `index-library`, or `literature-review` run picks these up automatically —
 including with `--non-interactive`, once field/title are set this way.
 
+### Which Claude model gets used
+
+Left alone, the toolkit picks from two tiers rather than using one model
+everywhere:
+
+- **`claude-sonnet-5`** for the one-shot, quality-sensitive calls that only
+  happen once (or a handful of times) per run: Part 1's sub-question
+  generation and Part 3's literature-review drafting.
+- **`claude-haiku-4-5`** for the bulk, per-paper work: abstract/excerpt
+  summaries and sub-question stance classification (supports/challenges/
+  mixed/unrelated). This runs once per paper — or once per paper per
+  sub-question — so it's the majority of a run's actual token spend, and
+  classification-style work doesn't need a larger model to do well.
+
+Pass `--llm-model` explicitly (e.g. `--llm-model claude-opus-5`) to override
+both tiers at once for that run, if a particular draft or analysis is worth
+the extra cost — an explicit choice always wins over the automatic default,
+uniformly across everything that command does.
+
 ### What it searches, and why not ScienceDirect / Google Scholar
 
 Neither ScienceDirect nor Google Scholar offers a way for a tool like this to
@@ -402,9 +421,8 @@ each sub-question:
 
 - Gathers the papers that support, challenge, or give mixed evidence on it
   (reusing Part 1/2's stance analysis).
-- **With Claude** (default — and defaults to `claude-opus-5`, not Sonnet,
-  since well-written prose benefits more from the stronger model than the
-  classification-style work in Parts 1/2; override with `--llm-model`):
+- **With Claude** (default — uses `claude-sonnet-5`; override with
+  `--llm-model claude-opus-5` if a particular draft is worth the extra cost):
   writes a real 150-250 word synthesis paragraph following standard
   literature-review conventions — synthesizing by theme rather than
   listing sources one by one (no "Smith (2020) found X. Jones (2019) found

@@ -15,6 +15,22 @@ from typing import Optional
 
 from . import env as _env
 
+# Two model tiers, centralized here so every part of the toolkit picks from
+# the same defaults instead of scattering literal model strings:
+#   * DEFAULT_MODEL — one-shot, quality-sensitive calls: sub-question
+#     generation, literature-review drafting. Worth the extra cost since
+#     there's only ever one (or a handful) of these per run.
+#   * DEFAULT_EXTRACTION_MODEL — bulk, per-paper calls: "what it's about"
+#     summaries, sub-question stance classification. These run once per
+#     paper (so N or N-times-the-sub-question-count calls per run) and are
+#     closer to classification/extraction than to writing — Haiku's
+#     speed/cost profile fits that far better than Sonnet or Opus, and is
+#     the actual majority of a typical run's token spend.
+# An explicit --llm-model always overrides both — these are just the
+# automatic choice when the user hasn't named one.
+DEFAULT_MODEL = "claude-sonnet-5"
+DEFAULT_EXTRACTION_MODEL = "claude-haiku-4-5"
+
 # Shared register instruction for every prompt that produces text destined
 # for a report or draft a student might paste into their thesis. Appended
 # (not prepended) to each system prompt so the task-specific rules are read
@@ -85,7 +101,7 @@ def _trim_to_last_sentence(text: str) -> str:
     return text
 
 
-def ask(client, system: str, user: str, model: str = "claude-sonnet-5", max_tokens: int = 300) -> Optional[str]:
+def ask(client, system: str, user: str, model: str = DEFAULT_MODEL, max_tokens: int = 300) -> Optional[str]:
     """Single-turn request. Returns the text response, or None on any failure."""
     try:
         message = client.messages.create(
