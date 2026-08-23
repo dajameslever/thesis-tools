@@ -42,9 +42,9 @@ def test_academic_style_note_mentions_key_constraints():
 
 def test_academic_style_note_is_embedded_in_content_prompts():
     from thesis_tools.summarize import _LLM_SYSTEM_PROMPT
-    from thesis_tools.literature_review import _INTRO_SYSTEM_PROMPT, _SYNTHESIS_SYSTEM_PROMPT, _GAPS_SYSTEM_PROMPT
+    from thesis_tools.literature_review import _INTRO_SYSTEM_PROMPT, _SYNTHESIS_SYSTEM_PROMPT, _CONCLUSION_SYSTEM_PROMPT
 
-    for prompt in (_LLM_SYSTEM_PROMPT, _INTRO_SYSTEM_PROMPT, _SYNTHESIS_SYSTEM_PROMPT, _GAPS_SYSTEM_PROMPT):
+    for prompt in (_LLM_SYSTEM_PROMPT, _INTRO_SYSTEM_PROMPT, _SYNTHESIS_SYSTEM_PROMPT, _CONCLUSION_SYSTEM_PROMPT):
         assert llm.ACADEMIC_STYLE_NOTE in prompt
 
 

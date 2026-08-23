@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from . import llm
-from .citations import STYLES, format_citation
+from .citations import STYLES, format_citation, in_text_citation
 from .dedupe import dedupe_papers
 from .relevance import score_relevance
 from .sources.base import Paper
@@ -111,7 +111,6 @@ def _draft_intro(inputs: LiteratureReviewInputs, num_papers: int, client) -> str
     )
 
 
-MAX_EXCERPT_CHARS_FOR_PROMPT = 3000
 MAX_PAPERS_PER_SYNTHESIS_CALL = 6
 
 # Grounded in standard literature-review guidance (e.g. Purdue OWL, university
@@ -119,7 +118,11 @@ MAX_PAPERS_PER_SYNTHESIS_CALL = 6
 # source-by-source; avoid the "laundry list"/"he-said-she-said" pattern where
 # every sentence opens with an author's name; quote sparingly and only when
 # exact wording earns its place, otherwise paraphrase; connect and contrast
-# sources within the same sentence rather than listing them in sequence.
+# sources within the same sentence rather than listing them in sequence; when
+# the evidence itself is contested, walk through both sides' reasoning as a
+# real debate rather than a one-line "sources disagree" aside — a literature
+# review is expected to critically evaluate competing evidence, not just
+# report that it exists.
 _SYNTHESIS_SYSTEM_PROMPT = (
     "You write ONE literature-review paragraph (150-250 words) addressing the given sub-question, "
     "using ONLY the material provided below for each paper. This is for an academic literature "
@@ -128,6 +131,21 @@ _SYNTHESIS_SYSTEM_PROMPT = (
     "sentence starts with an author's name (e.g. 'Smith (2020) found X. Jones (2019) found Y.'). "
     "Instead, lead with the claim or theme, and weave citations in as support — explicitly comparing, "
     "contrasting, or grouping sources that agree or disagree within the same sentence or two.\n"
+    "- WHEN THE PAPERS DISAGREE, DEBATE IT. If the papers given include both a 'supports' and a "
+    "'challenges' stance, do not just note that they disagree — structure the paragraph as a genuine "
+    "debate: present the case FOR first (the supporting evidence and the reasoning behind it), then "
+    "the case AGAINST (the challenging evidence and its reasoning), then close with a brief critical "
+    "evaluation weighing the two — which side has the stronger, more recent, or more directly relevant "
+    "evidence, or a plausible reason for the disagreement (different populations, methods, contexts, "
+    "etc). If every paper given shares the same stance, skip the debate structure and just synthesize "
+    "that consistent evidence.\n"
+    "- CITE USING EXACTLY THE MARKER GIVEN. Each paper below comes with the exact in-text citation "
+    "marker to use for it (already matching the student's chosen citation style) — reproduce that "
+    "marker's punctuation and form exactly, right after the claim it supports. Never invent a "
+    "different form or guess at style rules yourself. When quoting a passage near a '[Page N]' marker, "
+    "work that page number into the given marker the natural way for its form (e.g. ', p. N' before "
+    "the closing parenthesis for an author-date/MLA-style marker, or 'p. N' alongside a numbered "
+    "marker like [3]).\n"
     "- PREFER PARAPHRASE. Use a short direct quotation only when the exact wording matters — a precise "
     "definition, a specific finding stated in a distinctive or memorable way, or language too important "
     "to paraphrase safely. Use at most 1-2 direct quotations in the whole paragraph, even with more "
@@ -136,11 +154,6 @@ _SYNTHESIS_SYSTEM_PROMPT = (
     "an 'Abstract' or 'Excerpt from the original document' block given below — never invent, "
     "paraphrase-then-quote, or reconstruct a quotation from memory. If nothing given is worth quoting "
     "directly, use zero quotations — that's the normal case, not a failure.\n"
-    "- CITE QUOTES PROPERLY. A quotation from an 'Excerpt' block near a '[Page N]' marker should be "
-    "cited (LastName, Year, p. N). A quotation from an 'Abstract' block (which isn't paginated) should "
-    "be cited (LastName, Year) with no invented page number.\n"
-    "- Cite every other claim in-text as (LastName, Year) right after it.\n"
-    "- If the papers disagree with each other, say so explicitly and name which side each is on.\n"
     "- Write in formal academic prose — full sentences and paragraphs, not bullet points.\n"
     "- Text extracted from PDFs can contain minor artifacts (broken hyphenation, odd line breaks, "
     "OCR noise) — if a passage looks garbled, paraphrase instead of quoting it.\n"
@@ -149,20 +162,68 @@ _SYNTHESIS_SYSTEM_PROMPT = (
 )
 
 
-def _paper_block(paper: Paper, stance_label: str) -> str:
+def _citation_marker_for(paper: Paper, style: str, ref_number_by_key: Dict[str, int]) -> str:
+    """The exact in-text citation marker to hand the LLM (or use in the
+    heuristic fallback) for this paper, in whatever style the student
+    configured. IEEE numbers are assigned the first time a paper is seen,
+    in the order sections are drafted — an approximation of "citation
+    order of appearance" (the actual IEEE convention) without needing to
+    parse which citations an LLM's free-text output actually used — and
+    reused for every later mention of the same paper."""
+    if style.lower() == "ieee":
+        key = paper.key()
+        if key not in ref_number_by_key:
+            ref_number_by_key[key] = len(ref_number_by_key) + 1
+        return in_text_citation(paper, style, ref_number=ref_number_by_key[key])
+    return in_text_citation(paper, style)
+
+
+def _paper_block(paper: Paper, stance_label: str, citation_marker: str = "") -> str:
     author = paper.authors[0].split()[-1] if paper.authors and paper.authors[0].split() else "Unknown"
-    lines = [f"- {author} ({paper.year or 'n.d.'}), stance: {stance_label}. Title: {paper.title}."]
+    marker_note = f" Cite this paper in-text using exactly: {citation_marker}." if citation_marker else ""
+    lines = [f"- {author} ({paper.year or 'n.d.'}), stance: {stance_label}.{marker_note} Title: {paper.title}."]
     if paper.abstract:
         lines.append(f'  Abstract (verbatim): "{paper.abstract}"')
     if paper.full_text_excerpt:
-        excerpt = paper.full_text_excerpt[:MAX_EXCERPT_CHARS_FOR_PROMPT]
+        # Whole extracted document, not a truncated prefix — a debate-style
+        # paragraph weighing both sides needs the actual argument each paper
+        # makes, not just whatever happened to fall in the first N
+        # characters. extract.py itself no longer truncates a document's
+        # text on the way in, so this stays consistent end to end.
         lines.append(
-            f'  Excerpt from the original document, verbatim, "[Page N]" markers included where known '
-            f'(quote this exact wording only, citing the nearest page marker): "{excerpt}"'
+            '  Excerpt from the original document, verbatim, "[Page N]" markers included where known '
+            f'(quote this exact wording only, citing the nearest page marker): "{paper.full_text_excerpt}"'
         )
     if not paper.abstract and not paper.full_text_excerpt:
         lines.append("  (no abstract or text available — do not make specific claims about this paper's findings)")
     return "\n".join(lines)
+
+
+def _select_papers_for_synthesis(question: str, grouped: Dict[str, List[Paper]], cap: int) -> List[Tuple[str, Paper]]:
+    """Pick up to `cap` papers for one synthesis call, balanced across
+    stances rather than exhausting the cap on whichever stance happens to
+    have the most papers. A sub-question with 15 supporting papers and 2
+    challenging ones must still surface those 2 challengers — the debate
+    the paragraph is asked to write needs both sides represented, not just
+    the majority view. Within each stance, papers are ranked by relevance
+    to THIS sub-question specifically (not just the library-wide research
+    question), so whichever papers are kept are the most relevant available
+    on each side."""
+    groups = [
+        ("supports", sorted(grouped["supports"], key=lambda p: score_relevance(question, p), reverse=True)),
+        ("challenges", sorted(grouped["challenges"], key=lambda p: score_relevance(question, p), reverse=True)),
+        ("mixed/ambiguous", sorted(grouped["mixed"], key=lambda p: score_relevance(question, p), reverse=True)),
+    ]
+    selected: List[Tuple[str, Paper]] = []
+    round_idx = 0
+    while len(selected) < cap and any(round_idx < len(g) for _, g in groups):
+        for label, g in groups:
+            if len(selected) >= cap:
+                break
+            if round_idx < len(g):
+                selected.append((label, g[round_idx]))
+        round_idx += 1
+    return selected
 
 
 def _draft_synthesis_paragraph(
@@ -170,13 +231,9 @@ def _draft_synthesis_paragraph(
     grouped: Dict[str, List[Paper]],
     inputs: LiteratureReviewInputs,
     client,
+    ref_number_by_key: Dict[str, int],
 ) -> Tuple[str, List[Paper]]:
-    labeled = [
-        (label, p)
-        for label, papers in (("supports", grouped["supports"]), ("challenges", grouped["challenges"]), ("mixed/ambiguous", grouped["mixed"]))
-        for p in papers
-    ]
-    if not labeled:
+    if not (grouped["supports"] or grouped["challenges"] or grouped["mixed"]):
         return (
             "_No paper in the current sources speaks directly to this sub-question — "
             "a potential gap worth targeting with a follow-up search._",
@@ -184,13 +241,15 @@ def _draft_synthesis_paragraph(
         )
 
     # Cap how many papers go into one call — keeps prompt size (and cost)
-    # bounded regardless of library size. Papers arrive here already
-    # relevance-ranked, so this keeps the strongest matches.
-    labeled = labeled[:MAX_PAPERS_PER_SYNTHESIS_CALL]
+    # bounded regardless of library size — but balanced across stances (see
+    # _select_papers_for_synthesis), not just a straight truncation that
+    # could silently drop every challenging paper behind a wall of
+    # supporting ones.
+    labeled = _select_papers_for_synthesis(question, grouped, MAX_PAPERS_PER_SYNTHESIS_CALL)
     cited_papers = [p for _, p in labeled]
 
     if client is not None:
-        blocks = [_paper_block(p, label) for label, p in labeled]
+        blocks = [_paper_block(p, label, _citation_marker_for(p, inputs.style, ref_number_by_key)) for label, p in labeled]
         user_message = f"Sub-question: {question}\n\nPapers:\n" + "\n".join(blocks)
         # Headroom past the requested 150-250 words: a target word count is
         # not a hard cap, and running a bit long is far better than getting
@@ -200,25 +259,31 @@ def _draft_synthesis_paragraph(
         if result:
             return result, cited_papers
 
-    # Heuristic fallback: an honest structured outline, not prose.
+    # Heuristic fallback: an honest structured outline, not prose — still
+    # using each paper's real citation marker so even this no-LLM path
+    # respects whatever style was configured.
     lines = []
     for label, p in labeled:
-        author = p.authors[0].split()[-1] if p.authors and p.authors[0].split() else "Unknown"
+        marker = _citation_marker_for(p, inputs.style, ref_number_by_key)
         snippet = (p.abstract or p.full_text_excerpt or "")[:220].strip()
-        lines.append(f"- **{label.capitalize()}** — ({author}, {p.year or 'n.d.'}): {snippet}")
+        lines.append(f"- **{label.capitalize()}** — {marker}: {snippet}")
     return "\n".join(lines), cited_papers
 
 
-_GAPS_SYSTEM_PROMPT = (
-    "Write a short 'gaps and tensions' paragraph (100-180 words) for the closing synthesis section "
-    "of a literature review, given (1) sub-questions where the papers found disagree with each "
-    "other, and (2) sub-questions with no supporting literature at all. Frame these as opportunities "
-    "for the student's own thesis contribution. Invent nothing beyond what is given.\n\n"
-    + llm.ACADEMIC_STYLE_NOTE
+_CONCLUSION_SYSTEM_PROMPT = (
+    "Write a closing 'Conclusion and areas for further research' section (120-200 words) for a "
+    "literature review, given (1) sub-questions where the papers found disagree with each other, and "
+    "(2) sub-questions with no supporting literature at all. First, briefly synthesize what the "
+    "review as a whole suggests about the overall topic. Then end with a clearly labeled "
+    "'**Areas for further research:**' bullet list, one bullet per gap/tension given, each phrased as "
+    "a concrete direction for a follow-up study (e.g. what question it should ask, or what population/"
+    "method might resolve a disagreement) rather than just restating the sub-question verbatim. Frame "
+    "these as opportunities for the student's own thesis contribution. Invent nothing beyond what is "
+    "given.\n\n" + llm.ACADEMIC_STYLE_NOTE
 )
 
 
-def _draft_gaps_section(analysis: SubquestionAnalysis, no_coverage: List[str], inputs: LiteratureReviewInputs, client) -> str:
+def _draft_conclusion_section(analysis: SubquestionAnalysis, no_coverage: List[str], inputs: LiteratureReviewInputs, client) -> str:
     tensions = analysis.tensions()
     if not tensions and not no_coverage:
         return "No major tensions or coverage gaps were identified among the sub-questions checked."
@@ -229,20 +294,20 @@ def _draft_gaps_section(analysis: SubquestionAnalysis, no_coverage: List[str], i
             parts.append("Sub-questions where the papers found disagree with each other:\n" + "\n".join(f"- {q}" for q in tensions))
         if no_coverage:
             parts.append("Sub-questions with no supporting literature found at all:\n" + "\n".join(f"- {q}" for q in no_coverage))
-        # Same headroom reasoning as the synthesis call above — 100-180 words
+        # Same headroom reasoning as the synthesis call above — 120-200 words
         # requested, generous budget so truncation is rare.
-        result = llm.ask(client, _GAPS_SYSTEM_PROMPT, "\n\n".join(parts), model=inputs.llm_model, max_tokens=500)
+        result = llm.ask(client, _CONCLUSION_SYSTEM_PROMPT, "\n\n".join(parts), model=inputs.llm_model, max_tokens=500)
         if result:
             return result
 
-    lines = []
+    lines = ["**Areas for further research:**", ""]
     if tensions:
-        lines.append("**Disagreements in the literature:**")
+        lines.append("_Contested in the literature reviewed — the evidence itself disagrees:_")
         for q in tensions:
             lines.append(f"- {q}")
         lines.append("")
     if no_coverage:
-        lines.append("**No literature found for:**")
+        lines.append("_No literature found at all — a genuine gap worth a dedicated search:_")
         for q in no_coverage:
             lines.append(f"- {q}")
     return "\n".join(lines).strip()
@@ -306,12 +371,16 @@ def run_literature_review(inputs: LiteratureReviewInputs) -> str:
 
     cited_papers_by_key: Dict[str, Paper] = {}
     no_coverage: List[str] = []
+    # IEEE numbers a paper by order of first citation, not alphabetically —
+    # populated as _draft_synthesis_paragraph hands out markers below, then
+    # reused to number the reference list the same way.
+    ref_number_by_key: Dict[str, int] = {}
 
     for i, question in enumerate(inputs.sub_questions, start=1):
         grouped = analysis.grouped_papers(question, relevant)
         lines.append(f"## {i}. {question}")
         lines.append("")
-        paragraph, cited = _draft_synthesis_paragraph(question, grouped, inputs, client)
+        paragraph, cited = _draft_synthesis_paragraph(question, grouped, inputs, client, ref_number_by_key)
         lines.append(paragraph)
         lines.append("")
         if not cited:
@@ -319,20 +388,26 @@ def run_literature_review(inputs: LiteratureReviewInputs) -> str:
         for paper in cited:
             cited_papers_by_key[paper.key()] = paper
 
-    lines.append("## Synthesis: gaps and tensions")
+    lines.append("## Conclusion and Areas for Further Research")
     lines.append("")
-    lines.append(_draft_gaps_section(analysis, no_coverage, inputs, client))
+    lines.append(_draft_conclusion_section(analysis, no_coverage, inputs, client))
     lines.append("")
 
     lines.append("## References")
     lines.append("")
     lines.append(f"*(Only papers actually cited above, in {inputs.style.upper()} style — verify before submitting.)*")
     lines.append("")
-    cited_list = sorted(cited_papers_by_key.values(), key=lambda p: (p.authors[0] if p.authors else p.title))
+    if inputs.style.lower() == "ieee":
+        # Citation order (matching the in-text [n] markers already handed
+        # out), not alphabetical — the IEEE convention.
+        cited_list = sorted(cited_papers_by_key.values(), key=lambda p: ref_number_by_key.get(p.key(), 10**9))
+    else:
+        cited_list = sorted(cited_papers_by_key.values(), key=lambda p: (p.authors[0] if p.authors else p.title))
     if not cited_list:
         lines.append("_No papers were cited in the drafted sections above._")
     for i, paper in enumerate(cited_list, start=1):
-        lines.append(format_citation(paper, inputs.style, ref_number=i))
+        ref_number = ref_number_by_key.get(paper.key(), i) if inputs.style.lower() == "ieee" else i
+        lines.append(format_citation(paper, inputs.style, ref_number=ref_number))
         lines.append("")
 
     report_text = "\n".join(lines)

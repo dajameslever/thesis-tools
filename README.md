@@ -440,33 +440,56 @@ It draws papers from Part 1's `<report>.papers.json` and/or Part 2's
 each sub-question:
 
 - Gathers the papers that support, challenge, or give mixed evidence on it
-  (reusing Part 1/2's stance analysis).
+  (reusing Part 1/2's stance analysis) — when a sub-question has more
+  candidate papers than fit in one drafting call, **both sides of the
+  debate are kept**: papers are picked in relevance-to-this-sub-question
+  order, alternating across supports/challenges/mixed, so a handful of
+  challenging papers is never crowded out by a larger pile of supporting
+  ones.
 - **With Claude** (default — uses `claude-sonnet-5`; override with
   `--llm-model claude-opus-5` if a particular draft is worth the extra cost):
   writes a real 150-250 word synthesis paragraph following standard
   literature-review conventions — synthesizing by theme rather than
   listing sources one by one (no "Smith (2020) found X. Jones (2019) found
   Y." laundry-listing), and using a *sparing* direct quotation only when
-  exact wording earns its place, otherwise paraphrasing.
+  exact wording earns its place, otherwise paraphrasing. **When the papers
+  disagree, the paragraph debates it**: the case for, then the case
+  against, then a brief critical evaluation of which side's evidence is
+  stronger (or why they might reasonably disagree) — rather than a single
+  throwaway line noting a disagreement exists.
 - **Without Claude** (`--no-llm`, or no API key): a structured bullet outline
   grouped by stance instead of prose — still useful, just not narrative.
+- **In-text citations match whatever style you've configured** (`--style` —
+  APA/Harvard: `(Smith, 2020)`; Chicago author-date: `(Smith 2020)`; MLA:
+  `(Smith)`/`(Smith 15)`; IEEE: numbered `[3]`, assigned by order of first
+  citation and matching the reference list's own numbering) — Claude is
+  handed the exact marker to use for each paper rather than guessing at
+  style rules itself, so the in-text citations and the final reference list
+  never mismatch.
 
-**Quoting is grounded in real text, not just abstracts.** For papers Part 2
-indexed locally, the draft has access to the actual extracted document text
-(with page markers for PDFs), not only the abstract — so a direct quotation
-can be a real sentence from the paper, cited with a real page number. Any
-quotation must be copied verbatim from that text or the abstract; Claude is
-explicitly instructed to never invent or reconstruct a quotation from
-memory, and to paraphrase instead if extracted text looks garbled (PDF
-extraction can introduce broken hyphenation or OCR noise). Papers found only
-via Part 1's search APIs have just an abstract — those get paraphrased, not
-quoted, and the draft's header reports how many of your sources have real
-text available so you know which claims to double-check hardest.
+**Full document text goes into the drafting prompt, not a truncated
+excerpt** — the whole point of debating both sides properly is seeing each
+paper's actual argument, not just whatever fell in the first few thousand
+characters. **Quoting is grounded in real text, not just abstracts.** For
+papers Part 2 indexed locally, the draft has access to the actual extracted
+document text (with page markers for PDFs), not only the abstract — so a
+direct quotation can be a real sentence from the paper, cited with a real
+page number. Any quotation must be copied verbatim from that text or the
+abstract; Claude is explicitly instructed to never invent or reconstruct a
+quotation from memory, and to paraphrase instead if extracted text looks
+garbled (PDF extraction can introduce broken hyphenation or OCR noise).
+Papers found only via Part 1's search APIs have just an abstract — those get
+paraphrased, not quoted, and the draft's header reports how many of your
+sources have real text available so you know which claims to double-check
+hardest.
 
-The draft also gets an introduction, a closing **"gaps and tensions"**
-section (surfacing disagreements and sub-questions with no coverage at all —
-i.e. candidate contributions for your thesis), and a reference list
-containing only the papers actually cited in the draft.
+The draft also gets an introduction and a closing **"Conclusion and Areas
+for Further Research"** section — a brief synthesis of the review as a
+whole, plus an explicit bulleted list of concrete further-research
+directions drawn from sub-questions where the literature disagrees with
+itself and sub-questions with no coverage at all (i.e. candidate
+contributions for your thesis) — and a reference list containing only the
+papers actually cited in the draft.
 
 > ⚠️ **This is a draft, not a citable final product.** Claims about papers
 > Part 2 indexed locally draw on real extracted text; claims about papers
@@ -503,7 +526,8 @@ thesis_tools/
   subquestions.py     Sub-question generation + supports/challenges/mixed stance analysis
   stance_cache.py     Persists analyze_subquestions()'s per-paper Claude classifications so an
                       unchanged paper/question set is never reclassified (used by visualize-library)
-  citations.py        APA / MLA / Chicago / Harvard / IEEE formatting
+  citations.py        APA / MLA / Chicago / Harvard / IEEE reference-list formatting, plus
+                      in_text_citation() for the parenthetical/numbered marker used inline
   report.py           Renders Part 1's Markdown report
   topic_finder.py     Orchestrates Part 1 (search/dedupe/score/analyze/report + reanalyze cache)
   literature_review.py Orchestrates Part 3 (load -> dedupe -> synthesize -> draft)

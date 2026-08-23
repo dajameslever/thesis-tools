@@ -206,3 +206,57 @@ def format_citation(paper: Paper, style: str, ref_number: Optional[int] = None) 
     if style == "ieee":
         return _clean(format_ieee(paper, ref_number=ref_number))
     return _clean(_FORMATTERS[style](paper))
+
+
+def _lastname(full_name: str) -> str:
+    return _split_name(full_name)[1] or "n.a."
+
+
+def _author_group_for_in_text(paper: Paper) -> str:
+    """'Smith', 'Smith & Jones', or 'Smith et al.' — the shared author-
+    grouping convention every parenthetical (non-IEEE) style below uses,
+    differing only in punctuation/year placement around it."""
+    names = [_lastname(a) for a in paper.authors if a]
+    if not names:
+        return "n.a."
+    if len(names) == 1:
+        return names[0]
+    if len(names) == 2:
+        return f"{names[0]} & {names[1]}"
+    return f"{names[0]} et al."
+
+
+def in_text_citation(paper: Paper, style: str, ref_number: Optional[int] = None) -> str:
+    """The parenthetical marker to actually place inline in running prose —
+    distinct from format_citation()'s full reference-list entry. Used by
+    Part 3's literature review so a drafted paragraph's in-text citations
+    match whatever style the student configured, not one style hardcoded
+    regardless of --style:
+      * apa / harvard: "(Smith, 2020)" / "(Smith & Jones, 2020)" /
+        "(Smith et al., 2020)" — both are parenthetical author-date styles
+        with a comma before the year.
+      * chicago (author-date): the same author grouping, but no comma
+        before the year — "(Smith 2020)".
+      * mla: no year at all in-text (MLA cites by author, and page number
+        when known) — "(Smith)" or "(Smith 15)".
+      * ieee: a numbered bracket, "[3]" — ref_number must be supplied by
+        the caller (IEEE numbers reflect order of first citation, which
+        only the caller tracking a whole document can know).
+    """
+    style = style.lower()
+    if style not in _FORMATTERS:
+        raise ValueError(f"Unknown citation style '{style}'. Choose from: {', '.join(STYLES)}")
+
+    if style == "ieee":
+        return f"[{ref_number}]" if ref_number is not None else "[?]"
+
+    year = _year(paper)
+    authors = _author_group_for_in_text(paper)
+
+    if style == "mla":
+        page = (paper.pages or "").split("-")[0].strip()
+        return f"({authors} {page})" if page else f"({authors})"
+    if style == "chicago":
+        return f"({authors} {year})"
+    # apa / harvard
+    return f"({authors}, {year})"

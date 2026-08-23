@@ -62,7 +62,7 @@ def test_run_literature_review_heuristic_mode(tmp_path, monkeypatch):
     assert "AI-assisted DRAFT" in text
     assert "heuristic structured outline" in text
     assert "Sleep Loss Increases Risk-Taking" not in text or "Doe" in text  # cited via author in outline
-    assert "## Synthesis: gaps and tensions" in text
+    assert "## Conclusion and Areas for Further Research" in text
     assert "## References" in text
 
 
@@ -168,7 +168,7 @@ def test_run_literature_review_notes_gap_when_no_paper_covers_a_subquestion(tmp_
     run_literature_review(inputs)
     text = output_path.read_text()
     assert "potential gap" in text.lower()
-    assert "No literature found for" in text
+    assert "No literature found at all" in text
 
 
 @patch("thesis_tools.literature_review.llm.get_client")
@@ -216,6 +216,25 @@ def test_paper_block_flags_when_nothing_available():
     paper = Paper(title="Mystery Paper", authors=["Jane Doe"])
     block = _paper_block(paper, "supports")
     assert "no abstract or text available" in block
+
+
+def test_paper_block_includes_citation_marker_when_given():
+    paper = Paper(title="Sleep Study", year=2020, authors=["Jane Doe"], abstract="We find X.")
+    block = _paper_block(paper, "supports", "(Doe, 2020)")
+    assert "Cite this paper in-text using exactly: (Doe, 2020)." in block
+
+
+def test_paper_block_omits_marker_note_when_not_given():
+    paper = Paper(title="Sleep Study", year=2020, authors=["Jane Doe"], abstract="We find X.")
+    block = _paper_block(paper, "supports")
+    assert "Cite this paper in-text" not in block
+
+
+def test_paper_block_does_not_truncate_full_text_excerpt():
+    long_excerpt = "[Page 1]\n" + ("word " * 2000)
+    paper = Paper(title="Sleep Study", year=2020, authors=["Jane Doe"], full_text_excerpt=long_excerpt)
+    block = _paper_block(paper, "supports")
+    assert long_excerpt in block
 
 
 def test_run_literature_review_reports_full_text_availability(tmp_path, monkeypatch):
@@ -299,6 +318,138 @@ def test_synthesis_caps_papers_per_call(mock_ask, mock_get_client, tmp_path, mon
     text = output_path.read_text()
     cited_count = sum(1 for p in papers if f"10.1/{papers.index(p)}" in text)
     assert cited_count <= MAX_PAPERS_PER_SYNTHESIS_CALL
+
+
+@patch("thesis_tools.literature_review.llm.get_client")
+@patch("thesis_tools.literature_review.llm.ask")
+def test_synthesis_prompt_uses_configured_style_citation_marker(mock_ask, mock_get_client, tmp_path):
+    mock_get_client.return_value = object()
+    mock_ask.return_value = "A synthesis paragraph."
+
+    paper = Paper(
+        title="Sleep Study",
+        year=2020,
+        authors=["Jane Doe"],
+        doi="10.1/a",
+        abstract="We find a significant effect of sleep on decision-making, consistent with theory.",
+    )
+    cache_path = tmp_path / "report.md.papers.json"
+    _write_topic_cache(cache_path, [paper])
+
+    output_path = tmp_path / "review.md"
+    inputs = LiteratureReviewInputs(
+        field="X",
+        working_title="Sleep",
+        research_question="Does sleep affect decision-making?",
+        sub_questions=["Does sleep affect decision-making?"],
+        paper_sources=[str(cache_path)],
+        output_path=str(output_path),
+        use_llm=True,
+        style="mla",  # no year in-text, unlike the previously-hardcoded (LastName, Year)
+        min_relevance=0.0,
+    )
+    run_literature_review(inputs)
+
+    call_args = mock_ask.call_args_list
+    synthesis_calls = [c for c in call_args if "Sub-question:" in c.args[2]]
+    assert len(synthesis_calls) == 1
+    prompt = synthesis_calls[0].args[2]
+    assert "Cite this paper in-text using exactly: (Doe)." in prompt
+
+
+@patch("thesis_tools.literature_review.llm.get_client")
+@patch("thesis_tools.literature_review.llm.ask")
+def test_ieee_style_numbers_references_by_order_of_first_citation(mock_ask, mock_get_client, tmp_path):
+    mock_get_client.return_value = object()
+    mock_ask.return_value = "A synthesis paragraph."
+
+    first = Paper(
+        title="First Paper",
+        year=2020,
+        authors=["Alice Alpha"],
+        doi="10.1/first",
+        abstract="We find a significant effect, consistent with theory of sleep.",
+    )
+    second = Paper(
+        title="Second Paper",
+        year=2021,
+        authors=["Bob Beta"],
+        doi="10.1/second",
+        abstract="We find a significant effect, consistent with theory of sleep.",
+    )
+    cache_path = tmp_path / "report.md.papers.json"
+    _write_topic_cache(cache_path, [first, second])
+
+    output_path = tmp_path / "review.md"
+    inputs = LiteratureReviewInputs(
+        field="X",
+        working_title="Sleep",
+        research_question="Does sleep have an effect?",
+        sub_questions=["Does sleep have an effect?"],
+        paper_sources=[str(cache_path)],
+        output_path=str(output_path),
+        use_llm=True,
+        style="ieee",
+        min_relevance=0.0,
+    )
+    run_literature_review(inputs)
+
+    text = output_path.read_text()
+    references_section = text.split("## References", 1)[1]
+    numbered_lines = [line for line in references_section.splitlines() if line.startswith("[")]
+    assert len(numbered_lines) == 2
+    assert numbered_lines[0].startswith("[1]") and "First Paper" in numbered_lines[0]
+    assert numbered_lines[1].startswith("[2]") and "Second Paper" in numbered_lines[1]
+
+
+def test_synthesis_selects_papers_from_both_supports_and_challenges_within_cap(tmp_path, monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    question = "Does sleep deprivation affect adolescent decision-making?"
+    # More supporting papers than the per-call cap, and only one challenger —
+    # a straight truncation of supports-then-challenges would drop it entirely.
+    supports = [
+        Paper(
+            title=f"Supporting Paper {i}",
+            year=2020,
+            authors=[f"Alice Support{i}"],
+            doi=f"10.1/s{i}",
+            abstract=(
+                "We find a significant effect of sleep deprivation on adolescent decision-making, "
+                "consistent with prior theory."
+            ),
+        )
+        for i in range(8)
+    ]
+    challenger = Paper(
+        title="Challenging Paper",
+        year=2021,
+        authors=["Bob Challenger"],
+        doi="10.1/c",
+        abstract=(
+            "Contrary to expectations, we found no significant effect of sleep deprivation on "
+            "adolescent decision-making."
+        ),
+    )
+    cache_path = tmp_path / "report.md.papers.json"
+    _write_topic_cache(cache_path, supports + [challenger])
+
+    output_path = tmp_path / "review.md"
+    inputs = LiteratureReviewInputs(
+        field="X",
+        working_title="Y",
+        research_question=question,
+        sub_questions=[question],
+        paper_sources=[str(cache_path)],
+        output_path=str(output_path),
+        use_llm=False,
+        min_relevance=0.0,
+    )
+    run_literature_review(inputs)
+
+    text = output_path.read_text()
+    assert "(Challenger, 2021)" in text
+    support_citations = sum(1 for i in range(8) if f"(Support{i}, 2020)" in text)
+    assert 0 < support_citations < 8  # some supporters were left out to make room
 
 
 def test_run_literature_review_prints_one_llm_notice(tmp_path, monkeypatch, capsys):
