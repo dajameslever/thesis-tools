@@ -69,3 +69,49 @@ def test_ask_extracts_text_blocks():
     response.content = [block]
     client.messages.create.return_value = response
     assert llm.ask(client, "sys", "user") == "hello"
+
+
+def test_ask_trims_to_last_sentence_when_truncated_by_max_tokens():
+    client = MagicMock()
+    block = MagicMock()
+    block.type = "text"
+    block.text = "The literature broadly agrees on X. However, this apparent gap should"
+    response = MagicMock()
+    response.content = [block]
+    response.stop_reason = "max_tokens"
+    client.messages.create.return_value = response
+
+    result = llm.ask(client, "sys", "user")
+
+    assert result == "The literature broadly agrees on X."
+    assert not result.endswith("should")
+
+
+def test_ask_leaves_complete_response_untouched_when_not_truncated():
+    client = MagicMock()
+    block = MagicMock()
+    block.type = "text"
+    block.text = "A complete sentence. And another one."
+    response = MagicMock()
+    response.content = [block]
+    response.stop_reason = "end_turn"
+    client.messages.create.return_value = response
+
+    result = llm.ask(client, "sys", "user")
+
+    assert result == "A complete sentence. And another one."
+
+
+def test_ask_returns_untrimmed_when_no_sentence_boundary_found():
+    client = MagicMock()
+    block = MagicMock()
+    block.type = "text"
+    block.text = "a fragment with no punctuation at all"
+    response = MagicMock()
+    response.content = [block]
+    response.stop_reason = "max_tokens"
+    client.messages.create.return_value = response
+
+    result = llm.ask(client, "sys", "user")
+
+    assert result == "a fragment with no punctuation at all"

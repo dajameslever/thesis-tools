@@ -120,3 +120,25 @@ def test_analyze_subquestions_falls_back_to_heuristic_if_llm_unavailable(mock_ge
     question = "Does sleep deprivation affect adolescent decision-making?"
     analysis = analyze_subquestions([question], [paper], use_llm=True)
     assert analysis.stances_for(paper)[question].stance == "supports"
+
+
+def test_analyze_subquestions_uses_full_text_excerpt_when_no_abstract():
+    """The reported bug: a paper with real extracted text but no abstract
+    (the normal case for Part 2's locally-indexed PDFs) was being silently
+    treated as unrelated to every sub-question, because both the heuristic
+    and LLM stance paths only ever looked at paper.abstract."""
+    question = "Does sleep deprivation affect adolescent decision-making?"
+    paper = Paper(
+        title="A Paper",
+        abstract=None,
+        full_text_excerpt=(
+            "[Page 1]\nWe find a significant effect of sleep deprivation on adolescent "
+            "decision-making, consistent with prior theory."
+        ),
+    )
+    analysis = analyze_subquestions([question], [paper], use_llm=False)
+    assert analysis.stances_for(paper)[question].stance == "supports"
+
+
+def test_heuristic_stance_unrelated_with_neither_abstract_nor_excerpt():
+    assert _heuristic_stance(None, "Does X affect Y?").stance == "unrelated"

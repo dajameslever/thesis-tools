@@ -139,19 +139,28 @@ def generate_subquestions(topic_text: str, model: str = "claude-sonnet-5") -> Li
     return questions[:4]
 
 
-def _heuristic_stance(abstract: Optional[str], sub_question: str) -> StanceResult:
-    if not abstract:
+def _text_for_stance(paper: Paper) -> Optional[str]:
+    """Abstract when there is one; otherwise the extracted full-text excerpt.
+    Papers Part 2 indexes from a local PDF usually have no machine-readable
+    abstract field at all (extraction grabs raw page text, not a parsed
+    abstract), but do have real body text — never leave a paper with actual
+    text on hand unclassified just because it lacks an abstract."""
+    return paper.abstract or paper.full_text_excerpt
+
+
+def _heuristic_stance(text: Optional[str], sub_question: str) -> StanceResult:
+    if not text:
         return StanceResult("unrelated")
 
     overlap_terms = set(tokenize(sub_question))
-    abstract_terms = set(tokenize(abstract))
-    if not overlap_terms or not abstract_terms:
+    text_terms = set(tokenize(text))
+    if not overlap_terms or not text_terms:
         return StanceResult("unrelated")
-    overlap = len(overlap_terms & abstract_terms) / len(overlap_terms)
+    overlap = len(overlap_terms & text_terms) / len(overlap_terms)
     if overlap < _OVERLAP_THRESHOLD:
         return StanceResult("unrelated")
 
-    text = abstract.lower()
+    text = text.lower()
     has_support = _cue_present(text, _SUPPORT_CUES)
     has_challenge = any(cue in text for cue in _CHALLENGE_CUES)
 
@@ -167,8 +176,9 @@ def _heuristic_stance(abstract: Optional[str], sub_question: str) -> StanceResul
 _STANCE_LINE_RE = re.compile(r"^\s*(\d+)\s*[:.\-)]\s*(supports|challenges|mixed|unrelated)\s*[-:]?\s*(.*)$", re.I)
 
 _STANCE_SYSTEM_PROMPT = (
-    "You assess how a paper's abstract relates to a list of numbered sub-questions from a "
-    "student's thesis. For EACH sub-question, reply on its own line as:\n"
+    "You assess how a paper's abstract (or, if unavailable, an excerpt of its extracted full text) "
+    "relates to a list of numbered sub-questions from a student's thesis. For EACH sub-question, "
+    "reply on its own line as:\n"
     "<number>: <supports|challenges|mixed|unrelated> - <one short reason>\n"
     "\"unrelated\" means the abstract doesn't actually address that sub-question. Be strict: "
     "only say supports/challenges when the abstract's findings genuinely bear on the question. "
@@ -178,10 +188,12 @@ _STANCE_SYSTEM_PROMPT = (
 
 
 def _llm_stance_for_paper(client, paper: Paper, sub_questions: List[str], model: str) -> Optional[Dict[str, StanceResult]]:
-    if not paper.abstract:
+    text = _text_for_stance(paper)
+    if not text:
         return None
     numbered = "\n".join(f"{i}. {q}" for i, q in enumerate(sub_questions, start=1))
-    user_message = f"Sub-questions:\n{numbered}\n\nPaper title: {paper.title}\nAbstract: {paper.abstract}"
+    label = "Abstract" if paper.abstract else "Excerpt from the original document"
+    user_message = f"Sub-questions:\n{numbered}\n\nPaper title: {paper.title}\n{label}: {text}"
     response = llm.ask(client, _STANCE_SYSTEM_PROMPT, user_message, model=model, max_tokens=400)
     if not response:
         return None
@@ -215,7 +227,8 @@ def analyze_subquestions(
         if client is not None:
             stances = _llm_stance_for_paper(client, paper, sub_questions, model)
         if stances is None:
-            stances = {q: _heuristic_stance(paper.abstract, q) for q in sub_questions}
+            text = _text_for_stance(paper)
+            stances = {q: _heuristic_stance(text, q) for q in sub_questions}
         key = paper.key()
         analysis.stances[key] = stances
         analysis.paper_titles[key] = paper.title

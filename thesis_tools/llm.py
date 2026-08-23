@@ -9,6 +9,7 @@ rather than failing.
 from __future__ import annotations
 
 import os
+import re
 import sys
 from typing import Optional
 
@@ -63,6 +64,27 @@ def get_client(quiet: bool = False):
     return anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
 
 
+_SENTENCE_END_RE = re.compile(r"[.!?][\"')\]]*\s")
+
+
+def _trim_to_last_sentence(text: str) -> str:
+    """If a response got cut off mid-sentence by hitting max_tokens, trim it
+    back to the last complete sentence rather than shipping a fragment like
+    '...this apparent absence of disagreement should' straight into a draft.
+    Falls back to the untrimmed text if no sentence boundary is found in a
+    reasonable trailing portion — a short truncated answer is still better
+    than an empty one."""
+    matches = list(_SENTENCE_END_RE.finditer(text))
+    if not matches:
+        return text
+    cutoff = matches[-1].end()
+    # Only trim if it actually removes a trailing fragment, and doesn't
+    # throw away most of the response (e.g. one long run-on sentence).
+    if cutoff < len(text) and cutoff >= len(text) * 0.4:
+        return text[:cutoff].rstrip()
+    return text
+
+
 def ask(client, system: str, user: str, model: str = "claude-sonnet-5", max_tokens: int = 300) -> Optional[str]:
     """Single-turn request. Returns the text response, or None on any failure."""
     try:
@@ -73,6 +95,10 @@ def ask(client, system: str, user: str, model: str = "claude-sonnet-5", max_toke
             messages=[{"role": "user", "content": user}],
         )
         text = "".join(block.text for block in message.content if getattr(block, "type", None) == "text").strip()
+        if not text:
+            return None
+        if getattr(message, "stop_reason", None) == "max_tokens":
+            text = _trim_to_last_sentence(text)
         return text or None
     except Exception as exc:
         print(f"  [llm] request failed ({exc})", file=sys.stderr)

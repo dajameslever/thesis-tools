@@ -193,7 +193,11 @@ def _draft_synthesis_paragraph(
     if client is not None:
         blocks = [_paper_block(p, label) for label, p in labeled]
         user_message = f"Sub-question: {question}\n\nPapers:\n" + "\n".join(blocks)
-        result = llm.ask(client, _SYNTHESIS_SYSTEM_PROMPT, user_message, model=inputs.llm_model, max_tokens=400)
+        # Headroom past the requested 150-250 words: a target word count is
+        # not a hard cap, and running a bit long is far better than getting
+        # cut off mid-sentence (llm.ask() trims to the last full sentence on
+        # truncation, but more budget means that almost never triggers).
+        result = llm.ask(client, _SYNTHESIS_SYSTEM_PROMPT, user_message, model=inputs.llm_model, max_tokens=700)
         if result:
             return result, cited_papers
 
@@ -226,7 +230,9 @@ def _draft_gaps_section(analysis: SubquestionAnalysis, no_coverage: List[str], i
             parts.append("Sub-questions where the papers found disagree with each other:\n" + "\n".join(f"- {q}" for q in tensions))
         if no_coverage:
             parts.append("Sub-questions with no supporting literature found at all:\n" + "\n".join(f"- {q}" for q in no_coverage))
-        result = llm.ask(client, _GAPS_SYSTEM_PROMPT, "\n\n".join(parts), model=inputs.llm_model, max_tokens=300)
+        # Same headroom reasoning as the synthesis call above — 100-180 words
+        # requested, generous budget so truncation is rare.
+        result = llm.ask(client, _GAPS_SYSTEM_PROMPT, "\n\n".join(parts), model=inputs.llm_model, max_tokens=500)
         if result:
             return result
 

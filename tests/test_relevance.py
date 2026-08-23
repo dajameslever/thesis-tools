@@ -43,3 +43,25 @@ def test_keywords_from_text_drops_stopwords_and_dedupes():
     assert "the" not in kws
     assert "of" not in kws
     assert kws.count("sleep") == 1
+
+
+def test_score_relevance_falls_back_to_full_text_excerpt_without_abstract():
+    query = "sleep deprivation and adolescent decision making"
+    paper_with_excerpt_only = Paper(
+        title="A Study",
+        abstract=None,
+        full_text_excerpt="This paper examines sleep deprivation and adolescent decision making in depth.",
+    )
+    paper_with_nothing = Paper(title="A Study", abstract=None, full_text_excerpt=None)
+    assert score_relevance(query, paper_with_excerpt_only) > score_relevance(query, paper_with_nothing)
+
+
+def test_score_relevance_prefers_abstract_over_full_text_excerpt_when_both_present():
+    query = "sleep deprivation"
+    paper = Paper(
+        title="A Study",
+        abstract="About sleep deprivation directly.",
+        full_text_excerpt="Completely unrelated content about coffee farming economics.",
+    )
+    # Abstract present -> full_text_excerpt is not even consulted.
+    assert score_relevance(query, paper) > 0.0
