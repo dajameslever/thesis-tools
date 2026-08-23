@@ -12,7 +12,9 @@ from typing import Optional
 from . import env as _env
 from . import llm
 from .citations import STYLES
+from .library.index_store import LibraryIndex
 from .library.library_indexer import LibraryIndexerInputs, run_library_indexer
+from .library.visualize import build_visualization_html
 from .literature_review import LiteratureReviewInputs, run_literature_review
 from .project import DEFAULT_PROJECT_PATH, ProjectState
 from .sources import ALL_SOURCES
@@ -402,6 +404,13 @@ def _build_parser() -> argparse.ArgumentParser:
     il.add_argument("--project-file", default=DEFAULT_PROJECT_PATH, help=f"Where shared project state lives (default: {DEFAULT_PROJECT_PATH}) — read to reuse Part 1's question/sub-questions/style automatically")
     il.add_argument("--non-interactive", action="store_true", help="Don't prompt for missing values; fail instead if --folder is missing")
 
+    vl = subparsers.add_parser(
+        "visualize-library",
+        help="Part 2 add-on: render an HTML visualization of what's indexed — sources, verification confidence, citation coverage, and weaknesses",
+    )
+    vl.add_argument("--index-path", default="library/index.json", help="Path to the index built by index-library (default: library/index.json)")
+    vl.add_argument("-o", "--output", dest="output_path", default="library/visualization.html", help="Where to write the HTML page (default: library/visualization.html)")
+
     lr = subparsers.add_parser("literature-review", help="Part 3: draft a literature review structured around your sub-questions, from what Part 1/2 already found")
     lr.add_argument("--field", help="Your field/discipline (default: whatever Part 1 already used)")
     lr.add_argument("--title", dest="working_title", help="Working thesis title (default: whatever Part 1 already used)")
@@ -615,6 +624,23 @@ def _run_index_library_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_visualize_library_command(args: argparse.Namespace) -> int:
+    index_path = Path(args.index_path)
+    if not index_path.is_file():
+        print(f"error: no index found at {index_path} — run `index-library` first", file=sys.stderr)
+        return 2
+
+    index = LibraryIndex.load(index_path)
+    html = build_visualization_html(index)
+
+    output_path = Path(args.output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(html, encoding="utf-8")
+
+    print(f"Visualization ({len(index.entries)} file(s)) written to {output_path}")
+    return 0
+
+
 def _run_literature_review_command(args: argparse.Namespace) -> int:
     project = ProjectState.load(args.project_file)
 
@@ -767,6 +793,8 @@ def main(argv=None) -> int:
         return _run_topic_finder_command(args)
     if args.command == "index-library":
         return _run_index_library_command(args)
+    if args.command == "visualize-library":
+        return _run_visualize_library_command(args)
     if args.command == "literature-review":
         return _run_literature_review_command(args)
     if args.command == "configure":

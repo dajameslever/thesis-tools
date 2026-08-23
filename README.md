@@ -267,6 +267,38 @@ originals) renamed to a clean `Author_Year_Title.ext` scheme.
 
 Run `python -m thesis_tools index-library --help` for all options.
 
+### Visualizing what's indexed
+
+```bash
+python -m thesis_tools visualize-library
+```
+
+Renders a single self-contained HTML file (`library/visualization.html` by
+default — open it straight in a browser, no server needed) from the index
+`index-library` already built:
+
+- **Where your metadata came from** — a bar chart of how many papers were
+  verified via each source (Crossref, Semantic Scholar, OpenAlex, arXiv) vs.
+  resolved from local file metadata alone.
+- **Verification confidence** — DOI-verified vs. title-match-verified vs.
+  unresolved.
+- **Publication years** — a bar chart across your library (binned into
+  5-year buckets if the range is wide).
+- **Citation coverage** — the same included-vs-missing breakdown as the
+  Markdown report's "Citation coverage" section, plus the frequently-missing
+  table, in one place (needs `--fetch-references` to have been used at
+  least once).
+- **Weaknesses worth a second look** — computed flags, not just raw counts:
+  unresolved files, possible duplicate downloads, a high share of papers
+  with no abstract on record, over-reliance on a single source (70%+ from
+  one database), a high share of cited references still missing, and a
+  library skewed toward older papers. Each flag lists the specific
+  files/papers involved, not just a percentage.
+
+It's pure local computation over the existing index — no network calls, so
+it's cheap to regenerate (`-o some/path.html` to change where it's written)
+any time you re-run `index-library`.
+
 ## Part 3: Literature Review Drafter
 
 Turns whatever Part 1 (topic search) and/or Part 2 (your library) already
@@ -369,7 +401,8 @@ thesis_tools/
     organizer.py         Optional copy-only file organizer
     report.py            Renders Part 2's Markdown report
     library_indexer.py   Orchestrates Part 2
-  cli.py              `topic-finder` / `index-library` / `literature-review` / `configure` commands
+    visualize.py          Computes + renders the `visualize-library` HTML page
+  cli.py              `topic-finder` / `index-library` / `visualize-library` / `literature-review` / `configure` commands
 tests/                Unit tests (network calls are mocked; PDF/docx tests use real files)
 ```
 
