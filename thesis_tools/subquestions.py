@@ -20,9 +20,12 @@ import sys
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
+from pathlib import Path
+
 from . import llm
 from .relevance import tokenize
 from .sources.base import Paper
+from .stance_cache import StanceCache, questions_hash, text_hash
 
 STANCES = ("supports", "challenges", "mixed", "unrelated")
 
@@ -227,12 +230,24 @@ def analyze_subquestions(
     papers: List[Paper],
     use_llm: bool = False,
     model: str = llm.DEFAULT_EXTRACTION_MODEL,
+    cache_path: Optional[str] = None,
 ) -> SubquestionAnalysis:
+    """`cache_path`, when given, persists each paper's Claude-classified
+    stances to disk (see stance_cache.py) and reuses a cached result instead
+    of a fresh call as long as neither that paper's text nor the configured
+    sub-questions have changed since — so re-running this against an
+    unchanged library and unchanged questions costs nothing. Only consulted
+    when use_llm is True; the heuristic path is already free."""
     analysis = SubquestionAnalysis(sub_questions=list(sub_questions))
     if not sub_questions:
         return analysis
 
     client = llm.get_client(quiet=True) if use_llm else None
+    cache = StanceCache.load(Path(cache_path)) if (client is not None and cache_path) else None
+    q_hash = questions_hash(sub_questions) if cache is not None else None
+    cache_dirty = False
+    cache_hits = 0
+
     if client is not None and papers:
         # This is the slow path — one Claude call per paper — so make it
         # visible. The heuristic path below is local/instant and doesn't
@@ -241,14 +256,37 @@ def analyze_subquestions(
 
     for i, paper in enumerate(papers, start=1):
         stances: Optional[Dict[str, StanceResult]] = None
-        if client is not None:
+        text = _text_for_stance(paper)
+        paper_text_hash = text_hash(text) if (cache is not None and text) else None
+
+        if client is not None and cache is not None and paper_text_hash:
+            cached = cache.get(paper.key(), paper_text_hash, q_hash)
+            if cached is not None:
+                stances = {q: StanceResult(**v) for q, v in cached.items()}
+                cache_hits += 1
+                print(f"  [{i}/{len(papers)}] {paper.title} — cached, unchanged since last run", file=sys.stderr)
+
+        if stances is None and client is not None:
             print(f"  [{i}/{len(papers)}] {paper.title}", file=sys.stderr)
             stances = _llm_stance_for_paper(client, paper, sub_questions, model)
+            if stances is not None and cache is not None and paper_text_hash:
+                cache.put(
+                    paper.key(),
+                    paper_text_hash,
+                    q_hash,
+                    {q: {"stance": r.stance, "rationale": r.rationale} for q, r in stances.items()},
+                )
+                cache_dirty = True
+
         if stances is None:
-            text = _text_for_stance(paper)
             stances = {q: _heuristic_stance(text, q) for q in sub_questions}
         key = paper.key()
         analysis.stances[key] = stances
         analysis.paper_titles[key] = paper.title
+
+    if cache is not None and cache_dirty:
+        cache.save(Path(cache_path))
+    if cache is not None and cache_hits:
+        print(f"  -> reused {cache_hits} cached classification(s), skipping Claude for those", file=sys.stderr)
 
     return analysis

@@ -399,6 +399,15 @@ instead of the heuristic):
   research question. Each flag lists the specific files/papers involved —
   with the same find-it links where relevant — not just a percentage.
 
+**With `--llm-summaries`, stance classifications are cached per paper**
+(`library/stance_cache.json` by default, next to `--index-path` — override
+with `--stance-cache-path`), so re-running `visualize-library` on an
+unchanged library and unchanged sub-questions costs nothing: only a paper
+whose text actually changed (e.g. a fuller re-extraction) or a changed
+sub-question set triggers a fresh Claude call, restoring the "cheap to
+regenerate any time" promise this command otherwise makes. Pass
+`--no-stance-cache` to always reclassify from scratch.
+
 It's pure local computation over the existing index — no network calls, so
 it's cheap to regenerate (`-o some/path.html` to change where it's written)
 any time you re-run `index-library`.
@@ -492,6 +501,8 @@ thesis_tools/
   env.py              Minimal .env support for ANTHROPIC_API_KEY (git-ignored, not the shared project file)
   summarize.py        Extractive (default) or Claude-powered abstract summaries
   subquestions.py     Sub-question generation + supports/challenges/mixed stance analysis
+  stance_cache.py     Persists analyze_subquestions()'s per-paper Claude classifications so an
+                      unchanged paper/question set is never reclassified (used by visualize-library)
   citations.py        APA / MLA / Chicago / Harvard / IEEE formatting
   report.py           Renders Part 1's Markdown report
   topic_finder.py     Orchestrates Part 1 (search/dedupe/score/analyze/report + reanalyze cache)

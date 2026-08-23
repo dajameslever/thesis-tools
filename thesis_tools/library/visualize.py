@@ -67,6 +67,7 @@ def compute_stats(
     use_llm: bool = False,
     llm_model: str = llm.DEFAULT_EXTRACTION_MODEL,
     research_question: Optional[str] = None,
+    stance_cache_path: Optional[str] = None,
 ) -> dict:
     """Pure computation over an already-loaded index — no I/O, easy to unit
     test independently of the HTML it ends up rendered into.
@@ -78,7 +79,13 @@ def compute_stats(
     those already surface — rather than being purely library-wide stats
     with no connection to the actual research questions. `research_question`,
     when given, additionally flags papers with low relevance to it (same
-    scorer used elsewhere) — the "why is this even in my library" check."""
+    scorer used elsewhere) — the "why is this even in my library" check.
+
+    `stance_cache_path`, with use_llm, persists each paper's Claude-
+    classified stances to disk and reuses a cached result on a later run
+    instead of another Claude call, as long as neither that paper's text
+    nor sub_questions have changed since — restoring this module's "cheap
+    to regenerate any time" promise even with --llm-summaries on."""
     entries = index.entries
     total = len(entries)
 
@@ -112,7 +119,13 @@ def compute_stats(
     sub_questions = sub_questions or []
     subquestion_coverage: List[dict] = []
     if sub_questions:
-        analysis = analyze_subquestions(sub_questions, [e.paper for e in entries], use_llm=use_llm, model=llm_model)
+        analysis = analyze_subquestions(
+            sub_questions,
+            [e.paper for e in entries],
+            use_llm=use_llm,
+            model=llm_model,
+            cache_path=stance_cache_path,
+        )
         for question in sub_questions:
             grouped = analysis.titles_by_stance(question)
             subquestion_coverage.append(
@@ -900,6 +913,7 @@ def build_visualization_html(
     use_llm: bool = False,
     llm_model: str = llm.DEFAULT_EXTRACTION_MODEL,
     research_question: Optional[str] = None,
+    stance_cache_path: Optional[str] = None,
 ) -> str:
     """Convenience entry point used by the CLI: compute + render in one call."""
     return render_html(
@@ -909,5 +923,6 @@ def build_visualization_html(
             use_llm=use_llm,
             llm_model=llm_model,
             research_question=research_question,
+            stance_cache_path=stance_cache_path,
         )
     )

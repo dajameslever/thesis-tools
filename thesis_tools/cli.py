@@ -427,6 +427,15 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     vl.add_argument("--llm-summaries", action="store_true", help="Use Claude for stance classification against the sub-questions (needs ANTHROPIC_API_KEY; default: heuristic)")
     vl.add_argument("--llm-model", default=None, help="Model to use for --llm-summaries")
+    vl.add_argument(
+        "--stance-cache-path",
+        default=None,
+        help="With --llm-summaries, cache each paper's Claude-classified stances here and reuse them on a later "
+        "run instead of re-classifying, as long as neither that paper nor your sub-questions have changed "
+        "(default: stance_cache.json next to --index-path)",
+    )
+    vl.add_argument("--no-stance-cache", dest="use_stance_cache", action="store_false", help="Always re-classify with Claude, ignoring any cached result")
+    vl.set_defaults(use_stance_cache=True)
     vl.add_argument("--project-file", default=DEFAULT_PROJECT_PATH, help=f"Where shared project state lives (default: {DEFAULT_PROJECT_PATH}) — read to reuse Part 1's sub-questions/Claude settings automatically")
 
     lr = subparsers.add_parser("literature-review", help="Part 3: draft a literature review structured around your sub-questions, from what Part 1/2 already found")
@@ -684,6 +693,14 @@ def _run_visualize_library_command(args: argparse.Namespace) -> int:
         if issue:
             print(f"Claude requested but unavailable ({issue}) — using heuristic stance classification for this run.", file=sys.stderr)
 
+    # Sibling of the index by default, so both live under the same library/
+    # folder without an extra flag — --no-stance-cache disables it outright
+    # (e.g. to force a fresh classification after tweaking the sub-question
+    # wording in a way that should invalidate everything anyway).
+    stance_cache_path = None
+    if use_llm and args.use_stance_cache:
+        stance_cache_path = args.stance_cache_path or str(index_path.parent / "stance_cache.json")
+
     index = LibraryIndex.load(index_path)
     html = build_visualization_html(
         index,
@@ -691,6 +708,7 @@ def _run_visualize_library_command(args: argparse.Namespace) -> int:
         use_llm=use_llm,
         llm_model=llm_model,
         research_question=research_question,
+        stance_cache_path=stance_cache_path,
     )
 
     output_path = Path(args.output_path)

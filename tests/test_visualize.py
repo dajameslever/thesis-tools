@@ -1,3 +1,5 @@
+from unittest.mock import patch
+
 from thesis_tools.library.index_store import LibraryEntry, LibraryIndex
 from thesis_tools.library.visualize import build_visualization_html, compute_stats, render_html
 from thesis_tools.sources.base import Paper
@@ -362,6 +364,42 @@ def test_compute_stats_no_relevance_flag_without_research_question():
     stats = compute_stats(index)
     assert stats["low_relevance_titles"] == []
     assert stats["research_question"] is None
+
+
+@patch("thesis_tools.subquestions.llm.get_client")
+@patch("thesis_tools.subquestions.llm.ask")
+def test_compute_stats_reuses_cached_stance_classification(mock_ask, mock_get_client, tmp_path):
+    mock_get_client.return_value = object()
+    mock_ask.return_value = "1: supports - confirms it."
+    question = "Does X affect Y?"
+    entry = _entry("a.pdf", title="Paper A", abstract="Some abstract about X and Y.")
+    index = LibraryIndex([entry])
+    cache_path = str(tmp_path / "stance_cache.json")
+
+    compute_stats(index, sub_questions=[question], use_llm=True, stance_cache_path=cache_path)
+    assert mock_ask.call_count == 1
+
+    # Same index, same sub-questions, second run -> no new Claude calls.
+    compute_stats(index, sub_questions=[question], use_llm=True, stance_cache_path=cache_path)
+    assert mock_ask.call_count == 1
+
+
+@patch("thesis_tools.subquestions.llm.get_client")
+@patch("thesis_tools.subquestions.llm.ask")
+def test_build_visualization_html_threads_stance_cache_path(mock_ask, mock_get_client, tmp_path):
+    mock_get_client.return_value = object()
+    mock_ask.return_value = "1: supports - confirms it."
+    question = "Does X affect Y?"
+    entry = _entry("a.pdf", title="Paper A", abstract="Some abstract about X and Y.")
+    index = LibraryIndex([entry])
+    cache_path = str(tmp_path / "stance_cache.json")
+
+    build_visualization_html(index, sub_questions=[question], use_llm=True, stance_cache_path=cache_path)
+    assert mock_ask.call_count == 1
+    assert (tmp_path / "stance_cache.json").is_file()
+
+    build_visualization_html(index, sub_questions=[question], use_llm=True, stance_cache_path=cache_path)
+    assert mock_ask.call_count == 1
 
 
 def test_render_html_shows_low_relevance_and_unlinked_weaknesses():

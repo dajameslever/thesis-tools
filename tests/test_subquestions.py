@@ -166,3 +166,86 @@ def test_analyze_subquestions_silent_without_llm(capsys):
     analyze_subquestions([question], [paper], use_llm=False)
 
     assert capsys.readouterr().err == ""
+
+
+@patch("thesis_tools.subquestions.llm.get_client")
+@patch("thesis_tools.subquestions.llm.ask")
+def test_analyze_subquestions_reuses_cached_classification(mock_ask, mock_get_client, tmp_path):
+    mock_get_client.return_value = object()
+    mock_ask.return_value = "1: supports - confirms it."
+    paper = Paper(title="Study A", doi="10.1/a", abstract="Some abstract text.")
+    question = "Does sleep deprivation affect adolescent decision-making?"
+    cache_path = str(tmp_path / "stance_cache.json")
+
+    first = analyze_subquestions([question], [paper], use_llm=True, cache_path=cache_path)
+    assert mock_ask.call_count == 1
+    assert first.stances_for(paper)[question].stance == "supports"
+
+    second = analyze_subquestions([question], [paper], use_llm=True, cache_path=cache_path)
+    # Same paper, same question set, nothing changed -> no second Claude call.
+    assert mock_ask.call_count == 1
+    assert second.stances_for(paper)[question].stance == "supports"
+
+
+@patch("thesis_tools.subquestions.llm.get_client")
+@patch("thesis_tools.subquestions.llm.ask")
+def test_analyze_subquestions_cache_invalidated_by_changed_paper_text(mock_ask, mock_get_client, tmp_path):
+    mock_get_client.return_value = object()
+    mock_ask.return_value = "1: supports - confirms it."
+    question = "Does sleep deprivation affect adolescent decision-making?"
+    cache_path = str(tmp_path / "stance_cache.json")
+
+    paper_v1 = Paper(title="Study A", doi="10.1/a", abstract="Some abstract text.")
+    analyze_subquestions([question], [paper_v1], use_llm=True, cache_path=cache_path)
+    assert mock_ask.call_count == 1
+
+    # Same paper key (same DOI), but the text actually classified changed
+    # (e.g. re-indexing picked up a fuller abstract) -> must reclassify.
+    paper_v2 = Paper(title="Study A", doi="10.1/a", abstract="A completely different abstract now.")
+    analyze_subquestions([question], [paper_v2], use_llm=True, cache_path=cache_path)
+    assert mock_ask.call_count == 2
+
+
+@patch("thesis_tools.subquestions.llm.get_client")
+@patch("thesis_tools.subquestions.llm.ask")
+def test_analyze_subquestions_cache_invalidated_by_changed_subquestions(mock_ask, mock_get_client, tmp_path):
+    mock_get_client.return_value = object()
+    mock_ask.return_value = "1: supports - confirms it."
+    paper = Paper(title="Study A", doi="10.1/a", abstract="Some abstract text.")
+    cache_path = str(tmp_path / "stance_cache.json")
+
+    analyze_subquestions(["Does X affect Y?"], [paper], use_llm=True, cache_path=cache_path)
+    assert mock_ask.call_count == 1
+
+    # A different sub-question set -> the whole per-paper result is stale
+    # (one Claude call classifies against the whole list at once).
+    analyze_subquestions(["Does A affect B?"], [paper], use_llm=True, cache_path=cache_path)
+    assert mock_ask.call_count == 2
+
+
+@patch("thesis_tools.subquestions.llm.get_client")
+@patch("thesis_tools.subquestions.llm.ask")
+def test_analyze_subquestions_cache_reuse_prints_notice(mock_ask, mock_get_client, tmp_path, capsys):
+    mock_get_client.return_value = object()
+    mock_ask.return_value = "1: supports - confirms it."
+    paper = Paper(title="Study A", doi="10.1/a", abstract="Some abstract text.")
+    question = "Does sleep deprivation affect adolescent decision-making?"
+    cache_path = str(tmp_path / "stance_cache.json")
+
+    analyze_subquestions([question], [paper], use_llm=True, cache_path=cache_path)
+    capsys.readouterr()  # discard first-run output
+
+    analyze_subquestions([question], [paper], use_llm=True, cache_path=cache_path)
+    err = capsys.readouterr().err
+    assert "cached, unchanged since last run" in err
+    assert "reused 1 cached classification(s)" in err
+
+
+def test_analyze_subquestions_without_cache_path_never_persists(tmp_path, monkeypatch):
+    # No cache_path given -> nothing gets written to disk, on the heuristic
+    # path or (mocked) the LLM path alike.
+    monkeypatch.chdir(tmp_path)
+    paper = Paper(title="Study A", doi="10.1/a", abstract="Some abstract text.")
+    question = "Does sleep deprivation affect adolescent decision-making?"
+    analyze_subquestions([question], [paper], use_llm=False)
+    assert list(tmp_path.iterdir()) == []

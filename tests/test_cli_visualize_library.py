@@ -1,3 +1,5 @@
+from unittest.mock import patch
+
 from thesis_tools.cli import main
 from thesis_tools.library.index_store import LibraryEntry, LibraryIndex
 from thesis_tools.sources.base import Paper
@@ -152,6 +154,100 @@ def test_visualize_library_flags_low_relevance_papers_with_explicit_question(tmp
     assert rc == 0
     html = output_path.read_text(encoding="utf-8")
     assert "low relevance to your research question" in html
+
+
+@patch("thesis_tools.subquestions.llm.get_client")
+@patch("thesis_tools.subquestions.llm.ask")
+def test_visualize_library_caches_stance_classification_by_default(mock_ask, mock_get_client, tmp_path):
+    mock_get_client.return_value = object()
+    mock_ask.return_value = "1: supports - confirms it."
+    index_path = tmp_path / "library" / "index.json"
+    output_path = tmp_path / "library" / "visualization.html"
+    project_file = tmp_path / "project.json"
+    _index_with_paper(
+        index_path,
+        title="Relevant Paper",
+        full_text_excerpt="This significantly supports the claim that X affects Y, consistent with theory.",
+    )
+    common_args = [
+        "visualize-library",
+        "--index-path", str(index_path),
+        "--output", str(output_path),
+        "--project-file", str(project_file),
+        "--sub-questions", "Does X affect Y?",
+        "--llm-summaries",
+    ]
+
+    assert main(common_args) == 0
+    assert mock_ask.call_count == 1
+    # Cache file defaults to a sibling of --index-path.
+    assert (tmp_path / "library" / "stance_cache.json").is_file()
+
+    assert main(common_args) == 0
+    assert mock_ask.call_count == 1  # unchanged paper + unchanged question -> no second call
+
+
+@patch("thesis_tools.subquestions.llm.get_client")
+@patch("thesis_tools.subquestions.llm.ask")
+def test_visualize_library_no_stance_cache_always_reclassifies(mock_ask, mock_get_client, tmp_path):
+    mock_get_client.return_value = object()
+    mock_ask.return_value = "1: supports - confirms it."
+    index_path = tmp_path / "library" / "index.json"
+    output_path = tmp_path / "library" / "visualization.html"
+    project_file = tmp_path / "project.json"
+    _index_with_paper(
+        index_path,
+        title="Relevant Paper",
+        full_text_excerpt="This significantly supports the claim that X affects Y, consistent with theory.",
+    )
+    common_args = [
+        "visualize-library",
+        "--index-path", str(index_path),
+        "--output", str(output_path),
+        "--project-file", str(project_file),
+        "--sub-questions", "Does X affect Y?",
+        "--llm-summaries",
+        "--no-stance-cache",
+    ]
+
+    assert main(common_args) == 0
+    assert mock_ask.call_count == 1
+    assert not (tmp_path / "library" / "stance_cache.json").exists()
+
+    assert main(common_args) == 0
+    assert mock_ask.call_count == 2  # caching disabled -> reclassified every run
+
+
+@patch("thesis_tools.subquestions.llm.get_client")
+@patch("thesis_tools.subquestions.llm.ask")
+def test_visualize_library_explicit_stance_cache_path(mock_ask, mock_get_client, tmp_path):
+    mock_get_client.return_value = object()
+    mock_ask.return_value = "1: supports - confirms it."
+    index_path = tmp_path / "library" / "index.json"
+    output_path = tmp_path / "library" / "visualization.html"
+    project_file = tmp_path / "project.json"
+    custom_cache = tmp_path / "elsewhere" / "cache.json"
+    _index_with_paper(
+        index_path,
+        title="Relevant Paper",
+        full_text_excerpt="This significantly supports the claim that X affects Y, consistent with theory.",
+    )
+
+    rc = main(
+        [
+            "visualize-library",
+            "--index-path", str(index_path),
+            "--output", str(output_path),
+            "--project-file", str(project_file),
+            "--sub-questions", "Does X affect Y?",
+            "--llm-summaries",
+            "--stance-cache-path", str(custom_cache),
+        ]
+    )
+
+    assert rc == 0
+    assert custom_cache.is_file()
+    assert not (tmp_path / "library" / "stance_cache.json").exists()
 
 
 def test_visualize_library_reuses_project_research_question(tmp_path):
