@@ -11,7 +11,7 @@ from typing import Dict, Iterator, List, Optional
 from .. import llm
 from ..citations import STYLES
 from ..relevance import score_relevance
-from ..sources.base import slug_for_paper
+from ..sources.base import Paper, slug_for_paper
 from ..subquestions import analyze_subquestions
 from ..summarize import summarize
 from .extract import extract_document
@@ -260,3 +260,59 @@ def run_library_indexer(inputs: LibraryIndexerInputs) -> Dict[str, object]:
         "total": len(index.entries),
         "organized": len(organized),
     }
+
+
+def index_known_papers(papers: List[Paper], dest_dir: str, index_path: str) -> int:
+    """Add already-identified papers straight into this library's index —
+    used by Part 1's --download-papers, so a paper it finds for the topic/
+    sub-questions and downloads shows up in visualize-library and Part 3's
+    literature review too, not just topic-finder's own report.
+
+    Unlike run_library_indexer() above, this never runs DOI/title
+    identification: the paper's metadata already came straight from a
+    source API (Crossref/OpenAlex/Semantic Scholar/arXiv) when Part 1 found
+    it, not inferred from a local file's contents, so it's already at least
+    as trustworthy as what identify_document() would produce.
+
+    Only considers a paper that actually has extracted text (download_papers
+    sets full_text_excerpt on success; a paper with no open-access copy, or
+    a failed download, never gets one) and whose PDF is really on disk under
+    dest_dir/pdfs — skipping anything else rather than guessing. Loads/saves
+    the index only when there is at least one such paper, so a run that
+    downloaded nothing never touches (or creates) index_path. Returns how
+    many papers were added/updated.
+    """
+    pdf_dir = Path(dest_dir) / "pdfs"
+    to_add: List[tuple] = []
+    for paper in papers:
+        if not paper.full_text_excerpt:
+            continue
+        pdf_path = pdf_dir / f"{slug_for_paper(paper)}.pdf"
+        if not pdf_path.is_file():
+            continue
+        to_add.append((paper, pdf_path))
+
+    if not to_add:
+        return 0
+
+    path = Path(index_path)
+    index = LibraryIndex.load(path)
+    for paper, pdf_path in to_add:
+        entry = LibraryEntry(
+            file_path=str(pdf_path),
+            file_hash=hash_file(pdf_path),
+            file_type="pdf",
+            size_bytes=pdf_path.stat().st_size,
+            indexed_at=_dt.datetime.now().isoformat(timespec="seconds"),
+            # Already came from a source API's own record, not an inferred
+            # match — "verified-doi" when that record includes a DOI,
+            # otherwise the paper's title is itself the API's own record
+            # (not a guess), so "verified-title-match" fits better than
+            # "unresolved".
+            confidence="verified-doi" if paper.doi else "verified-title-match",
+            doi=paper.doi,
+            paper=paper,
+        )
+        index.upsert(entry)
+    index.save(path)
+    return len(to_add)

@@ -182,3 +182,49 @@ def test_topic_finder_default_model_tiers_without_explicit_override(tmp_path, mo
     assert rc == 0
     assert captured["llm_model"] == "claude-sonnet-5"
     assert captured["extraction_llm_model"] == "claude-haiku-4-5"
+
+
+def test_topic_finder_library_index_path_defaults_and_override(tmp_path, monkeypatch):
+    """--download-papers's library indexing defaults to library/index.json,
+    reuses whatever index-library last wrote to once that's known, and an
+    explicit --library-index-path always wins over both."""
+    from unittest.mock import patch
+
+    from thesis_tools.topic_finder import TopicFinderInputs
+
+    monkeypatch.chdir(tmp_path)
+    project_file = tmp_path / "thesis_tools_project.json"
+
+    captured = {}
+    original_init = TopicFinderInputs.__init__
+
+    def _capture_init(self, *args, **kwargs):
+        captured.update(kwargs)
+        original_init(self, *args, **kwargs)
+
+    def _run(extra_args):
+        with patch("thesis_tools.sources.semantic_scholar.SemanticScholarClient.search", return_value=[]), \
+             patch("thesis_tools.sources.openalex.OpenAlexClient.search", return_value=[]), \
+             patch("thesis_tools.sources.crossref.CrossrefClient.search", return_value=[]), \
+             patch("thesis_tools.sources.arxiv.ArxivClient.search", return_value=[]), \
+             patch.object(TopicFinderInputs, "__init__", _capture_init):
+            return main([
+                "topic-finder",
+                "--field", "Psychology",
+                "--title", "Sleep and Memory",
+                "--project-file", str(project_file),
+            ] + extra_args)
+
+    # No prior project state, no explicit flag -> the plain default.
+    assert _run([]) == 0
+    assert captured["library_index_path"] == "library/index.json"
+
+    # index-library already recorded where it wrote its index -> reuse that.
+    project = ProjectState.load(str(project_file))
+    project.updated(last_library_index="library/custom-index.json").save(str(project_file))
+    assert _run([]) == 0
+    assert captured["library_index_path"] == "library/custom-index.json"
+
+    # An explicit --library-index-path always wins over both.
+    assert _run(["--library-index-path", "elsewhere/index.json"]) == 0
+    assert captured["library_index_path"] == "elsewhere/index.json"

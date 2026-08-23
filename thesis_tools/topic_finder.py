@@ -12,6 +12,7 @@ from typing import List, Optional
 from . import llm
 from .citations import STYLES
 from .dedupe import dedupe_papers
+from .library.library_indexer import index_known_papers
 from .paper_download import download_papers
 from .relevance import keywords_from_text, score_relevance, title_similarity
 from .report import ScoredPaper, build_report
@@ -57,6 +58,13 @@ class TopicFinderInputs:
     # every paper has an open-access copy.
     download_papers: bool = False
     download_dir: str = "processed"
+    # Where a downloaded paper also gets added, so it shows up in
+    # visualize-library and Part 3's literature review too, not just this
+    # run's own report — same default location index-library uses, so both
+    # parts share one index unless told otherwise. Only consulted when
+    # download_papers is on; there's no separate toggle for this, since
+    # download_papers is already the opt-in gate.
+    library_index_path: str = "library/index.json"
 
 
 def _slugify(text: str) -> str:
@@ -196,6 +204,13 @@ def run_topic_finder(inputs: TopicFinderInputs) -> str:
         )
         saved = download_papers(candidates, dest_dir=inputs.download_dir)
         print(f"  -> saved {saved} PDF(s) + extracted text excerpt(s)", file=sys.stderr)
+        indexed = index_known_papers(candidates, dest_dir=inputs.download_dir, index_path=inputs.library_index_path)
+        if indexed:
+            print(
+                f"  -> added {indexed} of them to the library index ({inputs.library_index_path}), "
+                "so visualize-library and literature-review pick them up too",
+                file=sys.stderr,
+            )
 
     sub_questions = list(inputs.sub_questions) if inputs.sub_questions else []
     if not sub_questions and inputs.auto_subquestions and inputs.use_llm_summaries:

@@ -286,6 +286,93 @@ def test_run_topic_finder_skips_download_when_not_opted_in(
     mock_download.assert_not_called()
 
 
+@patch("thesis_tools.topic_finder.index_known_papers")
+@patch("thesis_tools.topic_finder.download_papers")
+@patch("thesis_tools.sources.crossref.CrossrefClient.search")
+@patch("thesis_tools.sources.arxiv.ArxivClient.search")
+@patch("thesis_tools.sources.openalex.OpenAlexClient.search")
+@patch("thesis_tools.sources.semantic_scholar.SemanticScholarClient.search")
+def test_run_topic_finder_indexes_downloaded_papers_into_library(
+    mock_ss, mock_oa, mock_arxiv, mock_crossref, mock_download, mock_index_known, tmp_path
+):
+    mock_ss.return_value = [
+        Paper(
+            title="Open Access Paper On Sleep",
+            year=2021,
+            abstract="An open access paper about sleep and decision-making.",
+            pdf_url="https://example.org/oa.pdf",
+            sources=["semanticscholar"],
+        )
+    ]
+    mock_oa.return_value = []
+    mock_arxiv.return_value = []
+    mock_crossref.return_value = []
+    mock_download.return_value = 1
+    mock_index_known.return_value = 1
+
+    output_path = tmp_path / "report.md"
+    inputs = TopicFinderInputs(
+        field="Psychology",
+        working_title="Sleep and Decision-Making",
+        style="apa",
+        output_path=str(output_path),
+        download_papers=True,
+        download_dir=str(tmp_path / "processed"),
+        library_index_path=str(tmp_path / "library" / "index.json"),
+    )
+
+    run_topic_finder(inputs)
+
+    mock_index_known.assert_called_once()
+    args, kwargs = mock_index_known.call_args
+    indexed_papers = args[0]
+    assert len(indexed_papers) == 1
+    assert indexed_papers[0].pdf_url == "https://example.org/oa.pdf"
+    assert kwargs["dest_dir"] == str(tmp_path / "processed")
+    assert kwargs["index_path"] == str(tmp_path / "library" / "index.json")
+
+
+@patch("thesis_tools.topic_finder.index_known_papers")
+@patch("thesis_tools.topic_finder.download_papers")
+@patch("thesis_tools.sources.crossref.CrossrefClient.search")
+@patch("thesis_tools.sources.arxiv.ArxivClient.search")
+@patch("thesis_tools.sources.openalex.OpenAlexClient.search")
+@patch("thesis_tools.sources.semantic_scholar.SemanticScholarClient.search")
+def test_run_topic_finder_skips_library_indexing_when_download_not_opted_in(
+    mock_ss, mock_oa, mock_arxiv, mock_crossref, mock_download, mock_index_known, tmp_path
+):
+    mock_ss.return_value = [
+        Paper(
+            title="Some Paper",
+            year=2021,
+            abstract="An abstract.",
+            pdf_url="https://example.org/oa.pdf",
+            sources=["semanticscholar"],
+        )
+    ]
+    mock_oa.return_value = []
+    mock_arxiv.return_value = []
+    mock_crossref.return_value = []
+
+    output_path = tmp_path / "report.md"
+    inputs = TopicFinderInputs(
+        field="Psychology",
+        working_title="Some Paper",
+        style="apa",
+        output_path=str(output_path),
+    )
+
+    run_topic_finder(inputs)
+
+    mock_download.assert_not_called()
+    mock_index_known.assert_not_called()
+
+
+def test_topic_finder_inputs_default_library_index_path():
+    inputs = TopicFinderInputs(field="Psychology", working_title="Some Title")
+    assert inputs.library_index_path == "library/index.json"
+
+
 def test_topic_finder_inputs_default_model_tiers():
     inputs = TopicFinderInputs(field="Psychology", working_title="Some Title")
     assert inputs.llm_model == "claude-sonnet-5"

@@ -1,9 +1,9 @@
 from unittest.mock import patch
 
 from thesis_tools.library.identify import IdentifiedPaper
-from thesis_tools.library.index_store import LibraryIndex
-from thesis_tools.library.library_indexer import LibraryIndexerInputs, run_library_indexer
-from thesis_tools.sources.base import Paper
+from thesis_tools.library.index_store import LibraryEntry, LibraryIndex
+from thesis_tools.library.library_indexer import LibraryIndexerInputs, index_known_papers, run_library_indexer
+from thesis_tools.sources.base import Paper, slug_for_paper
 
 
 def _fake_identify(paper_title="Sleep and Cognition", confidence="verified-doi", doi="10.1234/x", abstract=None):
@@ -386,3 +386,93 @@ def test_run_library_indexer_announces_summary_scoring_phase(tmp_path, capsys):
 def test_library_indexer_inputs_default_model_is_haiku():
     inputs = LibraryIndexerInputs(folder="/tmp/does-not-matter")
     assert inputs.llm_model == "claude-haiku-4-5"
+
+
+def test_index_known_papers_adds_downloaded_paper_with_doi(tmp_path):
+    dest_dir = tmp_path / "processed"
+    pdf_dir = dest_dir / "pdfs"
+    pdf_dir.mkdir(parents=True)
+    paper = Paper(title="Great Paper", year=2020, doi="10.1/great", full_text_excerpt="Some extracted text.")
+    (pdf_dir / f"{slug_for_paper(paper)}.pdf").write_bytes(b"%PDF-fake")
+    index_path = tmp_path / "library" / "index.json"
+
+    added = index_known_papers([paper], dest_dir=str(dest_dir), index_path=str(index_path))
+
+    assert added == 1
+    index = LibraryIndex.load(index_path)
+    assert len(index.entries) == 1
+    entry = index.entries[0]
+    assert entry.confidence == "verified-doi"
+    assert entry.doi == "10.1/great"
+    assert entry.paper.title == "Great Paper"
+
+
+def test_index_known_papers_uses_title_match_confidence_without_doi(tmp_path):
+    dest_dir = tmp_path / "processed"
+    pdf_dir = dest_dir / "pdfs"
+    pdf_dir.mkdir(parents=True)
+    paper = Paper(title="No DOI Paper", year=2021, full_text_excerpt="Some extracted text.")
+    (pdf_dir / f"{slug_for_paper(paper)}.pdf").write_bytes(b"%PDF-fake")
+    index_path = tmp_path / "library" / "index.json"
+
+    added = index_known_papers([paper], dest_dir=str(dest_dir), index_path=str(index_path))
+
+    assert added == 1
+    entry = LibraryIndex.load(index_path).entries[0]
+    assert entry.confidence == "verified-title-match"
+
+
+def test_index_known_papers_skips_paper_without_full_text(tmp_path):
+    dest_dir = tmp_path / "processed"
+    pdf_dir = dest_dir / "pdfs"
+    pdf_dir.mkdir(parents=True)
+    paper = Paper(title="Never Downloaded", year=2019)
+    (pdf_dir / f"{slug_for_paper(paper)}.pdf").write_bytes(b"%PDF-fake")
+    index_path = tmp_path / "library" / "index.json"
+
+    added = index_known_papers([paper], dest_dir=str(dest_dir), index_path=str(index_path))
+
+    assert added == 0
+    assert not index_path.exists()
+
+
+def test_index_known_papers_skips_paper_with_missing_pdf_file(tmp_path):
+    dest_dir = tmp_path / "processed"
+    paper = Paper(title="No PDF On Disk", year=2019, full_text_excerpt="Some extracted text.")
+    index_path = tmp_path / "library" / "index.json"
+
+    added = index_known_papers([paper], dest_dir=str(dest_dir), index_path=str(index_path))
+
+    assert added == 0
+    assert not index_path.exists()
+
+
+def test_index_known_papers_upserts_into_existing_index(tmp_path):
+    dest_dir = tmp_path / "processed"
+    pdf_dir = dest_dir / "pdfs"
+    pdf_dir.mkdir(parents=True)
+    index_path = tmp_path / "library" / "index.json"
+
+    existing_paper = Paper(title="Already Indexed", year=2018, doi="10.1/existing")
+    existing_entry = LibraryEntry(
+        file_path="/some/other/file.pdf",
+        file_hash="deadbeef",
+        file_type="pdf",
+        size_bytes=1,
+        indexed_at="2020-01-01T00:00:00",
+        confidence="verified-doi",
+        doi="10.1/existing",
+        paper=existing_paper,
+    )
+    LibraryIndex([existing_entry]).save(index_path)
+
+    new_paper = Paper(title="Freshly Downloaded", year=2022, doi="10.1/fresh", full_text_excerpt="Text.")
+    (pdf_dir / f"{slug_for_paper(new_paper)}.pdf").write_bytes(b"%PDF-fake")
+
+    added = index_known_papers([new_paper], dest_dir=str(dest_dir), index_path=str(index_path))
+
+    assert added == 1
+    index = LibraryIndex.load(index_path)
+    assert len(index.entries) == 2
+    titles = {e.paper.title for e in index.entries}
+    assert titles == {"Already Indexed", "Freshly Downloaded"}

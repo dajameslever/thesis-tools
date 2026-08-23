@@ -367,6 +367,13 @@ def _build_parser() -> argparse.ArgumentParser:
         "into --download-dir. Never follows a paywalled link — only what a source API reports as open access.",
     )
     tf.add_argument("--download-dir", default="processed", help="Where to save downloaded PDFs + extracted text (default: processed)")
+    tf.add_argument(
+        "--library-index-path",
+        default=None,
+        help="With --download-papers, also add each downloaded paper to this library index "
+        "(default: library/index.json, or wherever index-library last wrote to) so "
+        "visualize-library and literature-review pick it up too",
+    )
     tf.add_argument("--contact-email", help="Optional email sent to OpenAlex/Crossref's 'polite pool' for faster, more reliable responses")
     tf.add_argument("-o", "--output", dest="output_path", help="Where to write the Markdown report (default: output/<slug>-<timestamp>.md)")
     tf.add_argument(
@@ -470,6 +477,11 @@ def _run_topic_finder_command(args: argparse.Namespace) -> int:
     explicit_llm_model = args.llm_model or project.llm_model
     llm_model = explicit_llm_model or llm.DEFAULT_MODEL
     extraction_llm_model = explicit_llm_model or llm.DEFAULT_EXTRACTION_MODEL
+    # Only matters with --download-papers: where downloaded papers get added
+    # so index-library/visualize-library/literature-review pick them up too.
+    # Reuses wherever index-library last wrote to, so the two parts share one
+    # index without extra flags, unless the user points this somewhere else.
+    library_index_path = args.library_index_path or project.last_library_index or "library/index.json"
 
     # Only skip the interactive walkthrough when THIS invocation gives enough
     # to proceed without it: --field/--title passed directly (a scripting
@@ -518,6 +530,7 @@ def _run_topic_finder_command(args: argparse.Namespace) -> int:
             reanalyze_from=args.reanalyze_from,
             download_papers=args.download_papers,
             download_dir=args.download_dir,
+            library_index_path=library_index_path,
         )
     else:
         inputs = _interactive_topic_finder_inputs(project)
@@ -542,6 +555,7 @@ def _run_topic_finder_command(args: argparse.Namespace) -> int:
         inputs.reanalyze_from = args.reanalyze_from
         inputs.download_papers = inputs.download_papers or args.download_papers
         inputs.download_dir = args.download_dir
+        inputs.library_index_path = library_index_path
 
     try:
         report_path = run_topic_finder(inputs)
@@ -564,6 +578,10 @@ def _run_topic_finder_command(args: argparse.Namespace) -> int:
         use_llm=inputs.use_llm_summaries,
         llm_model=args.llm_model,  # only an explicit --llm-model sticks; a part's own default never does
         last_topic_cache=str(cache_path_for(Path(report_path))),
+        # Only set when --download-papers was on — updated() skips falsy
+        # values, so this never erases a last_library_index index-library
+        # itself already recorded.
+        last_library_index=inputs.library_index_path if inputs.download_papers else None,
     )
     project.save(args.project_file)
 

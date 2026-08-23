@@ -181,6 +181,15 @@ skipped. This is the same extraction Part 2 uses on local files, so the
 resulting excerpt can ground a direct quotation in Part 3's literature
 review rather than just an abstract.
 
+**Every downloaded paper is also added straight to Part 2's library index**
+(`library/index.json` by default, or wherever `index-library` last wrote to
+— override with `--library-index-path`) — no DOI/title lookup needed, since
+the metadata already came straight from the source API that found it. This
+means a paper `topic-finder` finds and downloads for your topic/sub-
+questions shows up in `visualize-library` and `literature-review`'s
+library-index path too, not just this run's own report — one shared
+library, however a paper first got found.
+
 Or non-interactively, e.g. for scripting:
 
 ```bash
