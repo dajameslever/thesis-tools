@@ -99,12 +99,21 @@ def run_library_indexer(inputs: LibraryIndexerInputs) -> Dict[str, object]:
             failed_count += 1
             continue
 
-        identified = identify_document(
-            doc,
-            filename_fallback=path.stem.replace("_", " ").replace("-", " ").strip() or path.name,
-            contact_email=inputs.contact_email,
-            fetch_references=inputs.fetch_references,
-        )
+        try:
+            identified = identify_document(
+                doc,
+                filename_fallback=path.stem.replace("_", " ").replace("-", " ").strip() or path.name,
+                contact_email=inputs.contact_email,
+                fetch_references=inputs.fetch_references,
+            )
+        except Exception as exc:
+            # One paper's identification blowing up (a flaky API, an
+            # unexpected response shape) must never abort indexing every
+            # other file in the folder — same principle as the extract/hash
+            # steps above.
+            print(f"  [index] identification failed for {path} ({exc}), skipping", file=sys.stderr)
+            failed_count += 1
+            continue
         # Attach the actual extracted text (not just the resolved metadata) so
         # Part 3 can quote real wording from this paper instead of just its
         # abstract — regardless of whether identification came from a DOI

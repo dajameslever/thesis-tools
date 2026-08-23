@@ -274,3 +274,37 @@ def test_semantic_scholar_retry_caps_backoff_at_max(mock_get, mock_sleep):
     SemanticScholarClient().search("sleep cognition")
 
     mock_sleep.assert_called_once_with(10.0)
+
+
+def _mock_null_body_response():
+    """Simulates a 200 response whose body is `null` — resp.json() returns
+    None rather than a dict, a real (if rare) shape seen from these APIs."""
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.raise_for_status.return_value = None
+    resp.json.return_value = None
+    return resp
+
+
+@patch("thesis_tools.sources.semantic_scholar.requests.get")
+def test_semantic_scholar_search_handles_null_json_body(mock_get):
+    mock_get.return_value = _mock_null_body_response()
+    assert SemanticScholarClient().search("sleep cognition") == []
+
+
+@patch("thesis_tools.sources.semantic_scholar.requests.get")
+def test_semantic_scholar_lookup_references_handles_null_json_body(mock_get):
+    mock_get.return_value = _mock_null_body_response()
+    assert SemanticScholarClient().lookup_references("10.1/x") == []
+
+
+@patch("thesis_tools.sources.openalex.requests.get")
+def test_openalex_search_handles_null_json_body(mock_get):
+    mock_get.return_value = _mock_null_body_response()
+    assert OpenAlexClient().search("sleep cognition") == []
+
+
+@patch("thesis_tools.sources.crossref.requests.get")
+def test_crossref_search_handles_null_json_body(mock_get):
+    mock_get.return_value = _mock_null_body_response()
+    assert CrossrefClient().search("sleep cognition") == []

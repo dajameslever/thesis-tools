@@ -48,7 +48,9 @@ class OpenAlexClient(SourceClient):
         try:
             resp = requests.get(API_URL, params=params, timeout=self.timeout)
             resp.raise_for_status()
-            data = resp.json()
+            # A 200 with an empty/"null" body parses to None, not {} — guard
+            # against that rather than blowing up on .get() below.
+            data = resp.json() or {}
         except Exception as exc:
             print(f"  [openalex] skipped ({exc})", file=sys.stderr)
             return []

@@ -203,3 +203,40 @@ def test_run_library_indexer_prints_one_llm_notice_not_one_per_paper(tmp_path, m
     stderr = capsys.readouterr().err
     assert stderr.count("ANTHROPIC_API_KEY not set") == 1
     assert "Claude requested but unavailable" in stderr
+
+
+def test_run_library_indexer_survives_one_file_failing_identification(tmp_path, capsys):
+    """A single file's identify_document() blowing up (a flaky API, an
+    unexpected response shape) must not abort indexing the rest of the
+    folder — same as an unreadable/unextractable file already doesn't."""
+    downloads = tmp_path / "downloads"
+    downloads.mkdir()
+    (downloads / "a-good-paper.pdf").write_bytes(b"%PDF-1.4 fake a")
+    (downloads / "b-broken-paper.pdf").write_bytes(b"%PDF-1.4 fake b")
+    index_path = tmp_path / "library" / "index.json"
+
+    def _identify(doc, filename_fallback, **kwargs):
+        if "broken" in filename_fallback:
+            raise TypeError("'NoneType' object is not iterable")
+        return IdentifiedPaper(
+            paper=Paper(title="A Good Paper", doi="10.1234/good", year=2020),
+            confidence="verified-doi",
+            matched_doi="10.1234/good",
+        )
+
+    with patch("thesis_tools.library.library_indexer.extract_document") as mock_extract, patch(
+        "thesis_tools.library.library_indexer.identify_document", side_effect=_identify
+    ):
+        from thesis_tools.library.extract import ExtractedDocument
+
+        mock_extract.return_value = ExtractedDocument(text="some text", title_hint=None, author_hint=None, file_type="pdf")
+
+        inputs = LibraryIndexerInputs(folder=str(downloads), index_path=str(index_path))
+        stats = run_library_indexer(inputs)
+
+    assert stats["new"] == 1
+    assert stats["failed"] == 1
+    index = LibraryIndex.load(index_path)
+    assert len(index.entries) == 1
+    assert index.entries[0].paper.title == "A Good Paper"
+    assert "identification failed" in capsys.readouterr().err

@@ -80,7 +80,10 @@ class SemanticScholarClient(SourceClient):
                 self.timeout,
             )
             resp.raise_for_status()
-            data = resp.json()
+            # A 200 with an empty/"null" body (seen from the unauthenticated
+            # tier under load) parses to None, not {} — guard against that
+            # rather than blowing up on .get() below.
+            data = resp.json() or {}
         except Exception as exc:  # network error, timeout, bad JSON, 4xx/5xx
             print(f"  [semanticscholar] skipped ({exc})", file=sys.stderr)
             return []
@@ -114,7 +117,8 @@ class SemanticScholarClient(SourceClient):
             if resp.status_code == 404:
                 return []
             resp.raise_for_status()
-            data = resp.json()
+            # Same empty/"null" body guard as search() above.
+            data = resp.json() or {}
         except Exception as exc:
             print(f"  [semanticscholar] reference lookup failed for {doi} ({exc})", file=sys.stderr)
             return []
