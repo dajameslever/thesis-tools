@@ -203,44 +203,152 @@ def test_unresolved_weakness_includes_search_links():
     assert "sciencedirect.com" in html
 
 
-def test_citation_network_empty_when_no_indexed_papers():
-    html = render_html(compute_stats(LibraryIndex()))
-    assert "No citation data yet" not in html  # empty-index short-circuit happens before this section
-
-
-def test_citation_network_shows_prompt_when_no_references_fetched():
+def test_connections_section_prompts_when_no_references_fetched():
     index = LibraryIndex([_entry("a.pdf")])
     html = render_html(compute_stats(index))
-    assert "No citation data yet" not in html
-    # A single indexed paper with no references still gets a node in the graph.
-    assert "GRAPH_DATA" in html
-    assert '"kind": "indexed"' in html
+    assert "How your papers connect" in html
+    assert "No reference lists fetched yet" in html
 
 
-def test_citation_network_embeds_valid_json_payload():
-    import json
-
+def test_connections_section_says_so_when_nothing_links():
+    """References fetched, but none of them point at another indexed paper —
+    a real finding about the library, not an empty chart."""
     index = LibraryIndex(
         [
-            _entry("a.pdf", doi="10.1/a", references=[{"doi": "10.1/b", "title": "B", "year": 2020}]),
+            _entry("a.pdf", doi="10.1/a", references=[{"doi": "10.9/elsewhere", "title": "Elsewhere", "year": 2000}]),
             _entry("b.pdf", doi="10.1/b"),
         ]
     )
     html = render_html(compute_stats(index))
-
-    start = html.index("const GRAPH_DATA = ") + len("const GRAPH_DATA = ")
-    end = html.index(";\n", start)
-    payload = json.loads(html[start:end])
-
-    assert len(payload["nodes"]) == 2
-    assert len(payload["edges"]) == 1
-    assert all("links_html" in n for n in payload["nodes"])
+    assert "cites\nanother one in this library" in html or "another one in this library" in html
 
 
-def test_citation_network_node_gets_doi_link_when_available():
-    index = LibraryIndex([_entry("a.pdf", doi="10.1/a")])
+def test_connections_section_draws_an_arc_between_two_linked_papers():
+    index = LibraryIndex(
+        [
+            _entry("a.pdf", doi="10.1/a", title="Newer Paper", year=2022,
+                   references=[{"doi": "10.1/b", "title": "Older Paper", "year": 2010}]),
+            _entry("b.pdf", doi="10.1/b", title="Older Paper", year=2010),
+        ]
+    )
     html = render_html(compute_stats(index))
-    assert "https://doi.org/10.1/a" in html
+    assert 'class="viz-arc"' in html
+    # One arc path, drawn as an elliptical arc above the baseline.
+    assert html.count('class="viz-arc-link"') == 1
+    assert "1</strong> of <strong>2</strong>" not in html  # both papers are connected
+    assert "<strong>2</strong> of <strong>2</strong>" in html
+    assert "<strong>1</strong> citation link(s)" in html
+
+
+def test_connections_arc_is_deterministic_across_runs():
+    """The whole reason this is an arc diagram and not a force layout —
+    the same index must render byte-identical geometry every time."""
+    index = LibraryIndex(
+        [
+            _entry("a.pdf", doi="10.1/a", title="A", year=2022, references=[{"doi": "10.1/b", "title": "B", "year": 2010}]),
+            _entry("b.pdf", doi="10.1/b", title="B", year=2010),
+            _entry("c.pdf", doi="10.1/c", title="C", year=2015),
+        ]
+    )
+    first = render_html(compute_stats(index))
+    second = render_html(compute_stats(index))
+    extract = lambda h: h[h.index('<svg id="viz-arc"'): h.index("</svg>", h.index('<svg id="viz-arc"'))]
+    assert extract(first) == extract(second)
+
+
+def test_papers_to_consider_ranks_gaps_by_citing_count():
+    index = LibraryIndex(
+        [
+            _entry("a.pdf", doi="10.1/a", references=[
+                {"doi": None, "title": "Cited By Three", "year": 2000},
+                {"doi": None, "title": "Cited By Two", "year": 2001},
+            ]),
+            _entry("b.pdf", doi="10.1/b", references=[
+                {"doi": None, "title": "Cited By Three", "year": 2000},
+                {"doi": None, "title": "Cited By Two", "year": 2001},
+            ]),
+            _entry("c.pdf", doi="10.1/c", references=[{"doi": None, "title": "Cited By Three", "year": 2000}]),
+        ]
+    )
+    html = render_html(compute_stats(index))
+    assert "Papers worth adding next" in html
+    assert "Cited By Three" in html and "Cited By Two" in html
+    # Ranked: the 3-citation work is rendered before the 2-citation one.
+    assert html.index("Cited By Three") < html.index("Cited By Two")
+    assert "<strong>2</strong> such work(s)" in html
+
+
+def test_papers_to_consider_prompts_when_no_references_fetched():
+    html = render_html(compute_stats(LibraryIndex([_entry("a.pdf")])))
+    assert "Not analyzed yet" in html
+
+
+def test_relevance_grid_renders_a_cell_per_paper_and_subquestion():
+    question = "Does digital transformation affect sustainability?"
+    entry = _entry("a.pdf", title="DT Paper", abstract=None)
+    entry.paper.full_text_excerpt = (
+        "We find a significant effect of digital transformation on sustainability, consistent with theory."
+    )
+    html = render_html(
+        compute_stats(
+            LibraryIndex([entry]),
+            sub_questions=[question],
+            use_llm=False,
+            research_question="digital transformation sustainability",
+        )
+    )
+    assert "Relevance to your questions" in html
+    assert 'class="viz-grid"' in html
+    assert "DT Paper" in html
+    assert question in html  # full text in the numbered key below the grid
+    assert "Supports" in html
+
+
+def test_relevance_grid_cells_carry_a_written_label_not_colour_alone():
+    question = "Does X affect Y?"
+    entry = _entry("a.pdf", title="Some Paper", abstract="An unrelated abstract about coffee.")
+    html = render_html(compute_stats(LibraryIndex([entry]), sub_questions=[question], use_llm=False))
+    assert 'class="viz-sr">Unrelated<' in html
+
+
+def test_relevance_grid_shows_relevance_bar_only_with_a_research_question():
+    entry = _entry("a.pdf", title="Some Paper")
+    # Assert on the rendered element, not the class name — the stylesheet
+    # carries the rule either way.
+    with_rq = render_html(compute_stats(LibraryIndex([entry]), research_question="some paper topic"))
+    assert '<div class="viz-relbar-fill"' in with_rq
+    assert ">Relevance</th>" in with_rq
+
+    without_rq = render_html(compute_stats(LibraryIndex([entry]), sub_questions=["Does X affect Y?"], use_llm=False))
+    assert '<div class="viz-relbar-fill"' not in without_rq
+    assert ">Relevance</th>" not in without_rq
+
+
+def test_relevance_grid_prompts_when_nothing_to_score_against():
+    html = render_html(compute_stats(LibraryIndex([_entry("a.pdf")])))
+    assert "No research question or sub-questions configured" in html
+
+
+def test_relevance_rows_sorted_most_relevant_first():
+    stats = compute_stats(
+        LibraryIndex(
+            [
+                _entry("a.pdf", title="A Completely Unrelated Coffee Farming Study"),
+                _entry("b.pdf", title="Digital Transformation and Sustainability Targets"),
+            ]
+        ),
+        research_question="digital transformation sustainability targets",
+    )
+    titles = [r["title"] for r in stats["relevance_rows"]]
+    assert titles[0] == "Digital Transformation and Sustainability Targets"
+
+
+def test_relevance_grid_caps_rows_and_points_at_the_excel_matrix():
+    from thesis_tools.library.visualize import MAX_HEATMAP_ROWS
+
+    entries = [_entry(f"{i}.pdf", title=f"Paper {i:03d}") for i in range(MAX_HEATMAP_ROWS + 5)]
+    html = render_html(compute_stats(LibraryIndex(entries), research_question="paper"))
+    assert f"Showing the {MAX_HEATMAP_ROWS} most relevant of {MAX_HEATMAP_ROWS + 5} paper(s)" in html
 
 
 def test_citation_network_gap_node_gets_search_links():
@@ -465,3 +573,52 @@ def test_build_visualization_html_threads_matrix_filename():
     entry = _entry("a.pdf", title="Paper A")
     html = build_visualization_html(LibraryIndex([entry]), matrix_filename="literature_matrix.xlsx")
     assert 'href="literature_matrix.xlsx" download' in html
+
+
+def test_arc_nodes_have_a_comfortable_hit_target_not_the_bare_dot():
+    """Regression: the node dot is 9px across, so hovering it meant landing
+    on a pinpoint — and the gap between the dot and its tick number was
+    dead. Each node carries an invisible hit column instead."""
+    import re
+
+    index = LibraryIndex(
+        [
+            _entry("a.pdf", doi="10.1/a", title="A", year=2022, references=[{"doi": "10.1/b", "title": "B", "year": 2010}]),
+            _entry("b.pdf", doi="10.1/b", title="B", year=2010),
+        ]
+    )
+    html = render_html(compute_stats(index))
+    widths = [float(w) for w in re.findall(r'class="viz-arc-hit"[^>]*width="([\d.]+)"', html)]
+    assert len(widths) == 2
+    assert all(w >= 24 for w in widths)
+
+
+def test_arc_diagram_handles_a_single_paper():
+    """A one-paper library makes the node spacing zero — the hit-column
+    width must still come out positive rather than collapsing."""
+    index = LibraryIndex([_entry("a.pdf", doi="10.1/a", references=[{"doi": "10.9/x", "title": "X", "year": 1999}])])
+    html = render_html(compute_stats(index))
+    assert 'class="viz-arc-hit"' not in html  # no links, so the short-circuit message shows instead
+    assert "None of your 1 indexed paper(s) cites" in html
+
+
+def test_bar_labels_are_truncated_to_fit_their_column():
+    from thesis_tools.library.visualize import _fit_label
+
+    long_label = "Sleep and Human Performance: A Foundational Review of Everything (1998)"
+    fitted = _fit_label(long_label, 330)
+    assert fitted.endswith("…")
+    assert len(fitted) < len(long_label)
+    # A label that already fits is left alone.
+    assert _fit_label("Short (2001)", 330) == "Short (2001)"
+
+
+def test_bars_are_square_against_the_baseline():
+    """Rounding all four corners detaches a bar from the axis it is
+    measured from — only the data end is rounded."""
+    from thesis_tools.library.visualize import _bar_path
+
+    path = _bar_path(100, 10, 200, 22, "var(--viz-accent)")
+    assert path.startswith('<path d="M 100.0 10.0 H ')
+    assert 'rx="4"' not in path
+    assert path.count(" A ") == 2  # one rounded corner at each end of the data end

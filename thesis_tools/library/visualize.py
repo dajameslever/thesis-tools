@@ -22,7 +22,7 @@ from ..links import doi_url, google_scholar_search_url, sciencedirect_search_url
 from ..recency import DEFAULT_OLD_THRESHOLD_YEARS, age_years, newest_year
 from ..relevance import score_relevance
 from ..subquestions import SubquestionAnalysis, analyze_subquestions
-from .citation_graph import build_citation_network, build_coverage
+from .citation_graph import build_coverage, build_internal_links
 from .index_store import LibraryEntry, LibraryIndex
 from .literature_matrix import build_literature_matrix_workbook
 
@@ -49,6 +49,34 @@ CONFIDENCE_ORDER = ["verified-doi", "verified-title-match", "unresolved"]
 # order, never cycled) and the fixed status palette.
 _CATEGORICAL = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4"]
 _STATUS = {"good": "#0ca30c", "warning": "#fab219", "serious": "#ec835a", "critical": "#d03b3b"}
+
+# Stance is a polarity, not a status: a paper challenging your assumption is
+# the opposite pole of one supporting it, not a "bad" outcome — so it gets the
+# palette's diverging pair (blue <-> red, neutral gray midpoint) rather than
+# the reserved good/critical status colors. Referenced as CSS custom
+# properties (defined in _CSS, per-mode) so the dark theme gets its own steps
+# instead of reusing light-surface hexes. Every place these appear also
+# carries a glyph or a written label, so color never carries the meaning
+# alone.
+STANCE_COLOR_VAR = {
+    "supports": "var(--viz-stance-supports)",
+    "challenges": "var(--viz-stance-challenges)",
+    "mixed": "var(--viz-stance-mixed)",
+    "unrelated": "var(--viz-stance-unrelated)",
+}
+STANCE_GLYPH = {"supports": "+", "challenges": "\u2212", "mixed": "~", "unrelated": ""}
+STANCE_LABEL = {
+    "supports": "Supports",
+    "challenges": "Challenges",
+    "mixed": "Mixed evidence",
+    "unrelated": "Unrelated",
+}
+
+# Rows rendered in the relevance grid. A personal library can run to
+# hundreds of papers; past ~40 rows the grid stops being a visualization and
+# becomes a spreadsheet — which is exactly what the companion .xlsx already
+# is, so the tail is pointed there rather than rendered twice.
+MAX_HEATMAP_ROWS = 40
 
 SOURCE_CONCENTRATION_WARN_THRESHOLD = 0.7  # one source supplying 70%+ of the library
 NO_ABSTRACT_WARN_THRESHOLD = 0.3  # 30%+ of papers missing an abstract
@@ -115,7 +143,7 @@ def compute_stats(
     duplicates = index.duplicates_by_doi()
     coverage = build_coverage(entries)
     references_fetched = any(e.references for e in entries)
-    citation_network = build_citation_network(entries, coverage)
+    internal_links = build_internal_links(entries)
 
     sub_questions = sub_questions or []
     subquestion_coverage: List[dict] = []
@@ -157,6 +185,32 @@ def compute_stats(
             if score_relevance(research_question, entry.paper) < LOW_RELEVANCE_THRESHOLD:
                 low_relevance_titles.append(entry.paper.title)
 
+    # One row per paper for the relevance grid: its relevance to the overall
+    # research question plus its stance on each sub-question. Sorted most-
+    # relevant first, so the top of the grid is the part worth reading and
+    # the tail is the "why is this here" end — same ordering question the
+    # low-relevance weakness flag answers, but shown per paper rather than
+    # as a single count.
+    relevance_rows: List[dict] = []
+    for entry in entries:
+        stances = analysis.stances_for(entry.paper) if analysis else {}
+        row_stances = [
+            (stances[q].stance if q in stances else "unrelated") for q in sub_questions
+        ]
+        relevance_rows.append(
+            {
+                "title": entry.paper.title,
+                "year": entry.paper.year,
+                "doi": entry.doi or entry.paper.doi,
+                "relevance": score_relevance(research_question, entry.paper) if research_question else None,
+                "stances": row_stances,
+                # How many sub-questions this paper actually speaks to —
+                # the secondary sort, and what makes a zero row obvious.
+                "engaged": sum(1 for st in row_stances if st != "unrelated"),
+            }
+        )
+    relevance_rows.sort(key=lambda r: (r["relevance"] or 0, r["engaged"]), reverse=True)
+
     stats = {
         "generated_at": _dt.datetime.now().strftime("%Y-%m-%d %H:%M"),
         "total": total,
@@ -171,13 +225,14 @@ def compute_stats(
         "old_papers_count": len(old_papers),
         "unresolved_entries": unresolved_entries,
         "coverage": coverage,
-        "citation_network": citation_network,
+        "internal_links": internal_links,
         "references_fetched": references_fetched,
         "sub_questions": sub_questions,
         "subquestion_coverage": subquestion_coverage,
         "no_subquestion_coverage_titles": no_subquestion_coverage_titles,
         "research_question": research_question,
         "low_relevance_titles": low_relevance_titles,
+        "relevance_rows": relevance_rows,
         # Not rendered directly by render_html() — kept so build_literature_matrix()
         # can reuse the same stance classification build_visualization_html()
         # already computed, instead of re-running (and re-billing) it.
@@ -349,9 +404,9 @@ def _bar_chart_svg(
     gap: int = 10,
     label_width: int = 220,
 ) -> str:
-    """`rows`: [(label, count, hex_color), ...] in the order to render,
-    top to bottom. Self-contained inline SVG — a labeled horizontal bar per
-    row, a visible count beside it (never color alone)."""
+    """`rows`: [(label, count, color), ...] in the order to render, top to
+    bottom. Self-contained inline SVG — a labeled horizontal bar per row, a
+    visible count beside it (never color alone)."""
     if not rows:
         return '<p class="viz-muted">No data yet.</p>'
 
@@ -364,13 +419,43 @@ def _bar_chart_svg(
     for label, count, color in rows:
         bar_w = max(int((count / max_count) * chart_width), 2) if count else 0
         text_y = y + bar_height / 2 + 4
-        parts.append(f'<text x="0" y="{text_y:.0f}" class="viz-bar-label">{_esc(label)}</text>')
+        parts.append(
+            f'<text x="0" y="{text_y:.0f}" class="viz-bar-label">{_esc(_fit_label(label, label_width))}</text>'
+        )
         if bar_w:
-            parts.append(f'<rect x="{label_width}" y="{y}" width="{bar_w}" height="{bar_height}" rx="4" fill="{color}"/>')
+            parts.append(_bar_path(label_width, y, bar_w, bar_height, color))
         parts.append(f'<text x="{label_width + bar_w + 8}" y="{text_y:.0f}" class="viz-bar-count">{count}</text>')
         y += bar_height + gap
     parts.append("</svg>")
     return "\n".join(parts)
+
+
+# .viz-bar-label renders at 12px; ~6.6px per character is a safe upper bound
+# for the system sans at that size, so a label budgeted this way never runs
+# under the bar it belongs to.
+_LABEL_PX_PER_CHAR = 6.6
+
+
+def _fit_label(label: str, label_width: int) -> str:
+    """Truncate a bar's label to what its column can actually hold. The
+    column is fixed and the bars start right after it, so an over-long
+    label would render *underneath* the first bar rather than being
+    clipped — worse than a visible ellipsis."""
+    budget = max(int((label_width - 10) / _LABEL_PX_PER_CHAR), 8)
+    return label if len(label) <= budget else label[: budget - 1] + "\u2026"
+
+
+def _bar_path(x: float, y: float, width: float, height: float, color: str) -> str:
+    """A bar rounded at its data end only, square against the baseline —
+    rounding all four corners detaches the bar from the axis it is measured
+    from."""
+    r = min(4.0, width / 2, height / 2)
+    d = (
+        f"M {x:.1f} {y:.1f} H {x + width - r:.1f} A {r:.1f} {r:.1f} 0 0 1 {x + width:.1f} {y + r:.1f} "
+        f"V {y + height - r:.1f} A {r:.1f} {r:.1f} 0 0 1 {x + width - r:.1f} {y + height:.1f} "
+        f"H {x:.1f} Z"
+    )
+    return f'<path d="{d}" fill="{color}"/>' 
 
 
 def _confidence_rows(stats: dict) -> List[Tuple[str, int, str]]:
@@ -457,6 +542,12 @@ _CSS = """
   --viz-text-secondary: #52514e;
   --viz-muted: #898781;
   --viz-border: rgba(11,11,11,0.10);
+  --viz-stance-supports: #2a78d6;
+  --viz-stance-challenges: #e34948;
+  --viz-stance-mixed: #c3c2b7;
+  --viz-stance-unrelated: transparent;
+  --viz-accent: #2a78d6;
+  --viz-accent-soft: rgba(42,120,214,0.16);
   font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
   background: var(--viz-page);
   color: var(--viz-text-primary);
@@ -473,6 +564,12 @@ _CSS = """
     --viz-text-secondary: #c3c2b7;
     --viz-muted: #898781;
     --viz-border: rgba(255,255,255,0.10);
+    --viz-stance-supports: #3987e5;
+    --viz-stance-challenges: #e66767;
+    --viz-stance-mixed: #4a4a46;
+    --viz-stance-unrelated: transparent;
+    --viz-accent: #3987e5;
+    --viz-accent-soft: rgba(57,135,229,0.22);
   }
 }
 :root[data-theme="dark"] .viz-root {
@@ -483,6 +580,12 @@ _CSS = """
   --viz-text-secondary: #c3c2b7;
   --viz-muted: #898781;
   --viz-border: rgba(255,255,255,0.10);
+  --viz-stance-supports: #3987e5;
+  --viz-stance-challenges: #e66767;
+  --viz-stance-mixed: #4a4a46;
+  --viz-stance-unrelated: transparent;
+  --viz-accent: #3987e5;
+  --viz-accent-soft: rgba(57,135,229,0.22);
 }
 .viz-root h1 { font-size: 1.5rem; margin: 0 0 4px; }
 .viz-root h2 { font-size: 1.1rem; margin: 40px 0 12px; }
@@ -509,19 +612,44 @@ table.viz-table th { color: var(--viz-text-secondary); font-weight: 600; }
 .viz-root a:visited { opacity: 0.85; }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .viz-root a { color: #3987e5; } }
 :root[data-theme="dark"] .viz-root a { color: #3987e5; }
-.viz-graph-svg { width: 100%; height: 480px; display: block; background: var(--viz-page); border: 1px solid var(--viz-border); border-radius: 8px; cursor: grab; touch-action: none; }
-.viz-graph-svg:active { cursor: grabbing; }
-.viz-graph-edge { stroke: var(--viz-muted); stroke-opacity: 0.5; stroke-width: 1.5; transition: stroke-opacity 0.15s; }
-.viz-graph-edge.viz-graph-dim { stroke-opacity: 0.06; }
-.viz-graph-node { cursor: pointer; }
-.viz-graph-node.viz-graph-dim { opacity: 0.15; }
-.viz-graph-label { font-size: 10px; fill: var(--viz-text-secondary); pointer-events: none; }
-.viz-graph-legend { display: flex; gap: 16px; flex-wrap: wrap; font-size: 0.8rem; color: var(--viz-text-secondary); margin: 4px 0 12px; }
-.viz-graph-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }
-.viz-graph-info { margin-top: 12px; padding: 10px 14px; border: 1px solid var(--viz-border); border-radius: 8px; background: var(--viz-surface); font-size: 0.85rem; min-height: 20px; }
 .viz-subq-card { margin-bottom: 16px; }
 .viz-subq-question { font-weight: 600; margin: 0 0 10px; }
 .viz-subq-stance-label { font-weight: 600; font-size: 0.85rem; margin: 10px 0 2px; }
+.viz-legend { display: flex; gap: 18px; flex-wrap: wrap; font-size: 0.8rem; color: var(--viz-text-secondary); margin: 0 0 14px; align-items: center; }
+.viz-swatch { display: inline-block; width: 11px; height: 11px; border-radius: 3px; margin-right: 5px; vertical-align: -1px; border: 1px solid var(--viz-border); }
+.viz-lede { margin: 0 0 14px; color: var(--viz-text-secondary); font-size: 0.9rem; }
+.viz-lede strong { color: var(--viz-text-primary); font-variant-numeric: tabular-nums; }
+.viz-scroll { overflow-x: auto; }
+.viz-arc { width: 100%; height: auto; display: block; }
+.viz-arc-link { fill: none; stroke: var(--viz-text-secondary); stroke-opacity: 0.45; stroke-width: 1.5; transition: stroke-opacity 0.12s, stroke 0.12s; }
+.viz-arc-node { transition: opacity 0.12s; }
+.viz-arc-hit { fill: transparent; }
+.viz-arc-node:focus { outline: none; }
+.viz-arc-node:focus-visible .viz-arc-dot { stroke: var(--viz-text-primary); stroke-width: 2.5; }
+.viz-arc-dot { stroke: var(--viz-surface); stroke-width: 2; }
+.viz-arc-axis { stroke: var(--viz-border); stroke-width: 1; }
+.viz-arc-tick { font-size: 9px; fill: var(--viz-muted); text-anchor: middle; font-variant-numeric: tabular-nums; }
+.viz-arc-caption { font-size: 10px; fill: var(--viz-muted); }
+.viz-arc.viz-arc-active .viz-arc-link { stroke-opacity: 0.1; }
+.viz-arc.viz-arc-active .viz-arc-link.viz-on { stroke-opacity: 1; stroke: var(--viz-accent); stroke-width: 2; }
+.viz-arc.viz-arc-active .viz-arc-node { opacity: 0.3; }
+.viz-arc.viz-arc-active .viz-arc-node.viz-on { opacity: 1; }
+.viz-grid { border-collapse: separate; border-spacing: 2px; font-size: 0.82rem; }
+.viz-grid th { font-weight: 600; color: var(--viz-text-secondary); text-align: center; padding: 4px 6px; font-size: 0.78rem; }
+.viz-grid th.viz-grid-rowhead, .viz-grid td.viz-grid-rowhead { text-align: left; min-width: 220px; max-width: 320px; }
+.viz-grid td { padding: 4px 6px; }
+.viz-grid-title { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.viz-grid th.viz-grid-year-col, .viz-grid td.viz-grid-year-col { color: var(--viz-muted); font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+.viz-cell { width: 30px; height: 22px; border-radius: 4px; text-align: center; font-weight: 700; color: #ffffff; border: 1px solid transparent; }
+.viz-cell-unrelated { border-color: var(--viz-border); color: var(--viz-muted); font-weight: 400; }
+.viz-relbar-track { position: relative; width: 76px; height: 16px; background: var(--viz-accent-soft); border-radius: 3px; }
+.viz-relbar-fill { position: absolute; inset: 0 auto 0 0; background: var(--viz-accent); border-radius: 3px; }
+.viz-relbar-value { font-size: 0.75rem; color: var(--viz-text-secondary); font-variant-numeric: tabular-nums; margin-left: 6px; }
+.viz-relbar { display: flex; align-items: center; }
+.viz-qkey { margin: 14px 0 0; padding-left: 20px; font-size: 0.85rem; color: var(--viz-text-secondary); }
+.viz-details { margin-top: 14px; font-size: 0.85rem; }
+.viz-details summary { cursor: pointer; color: var(--viz-text-secondary); }
+.viz-sr { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
 """
 
 
@@ -541,10 +669,12 @@ def _render_subquestion_coverage_section(stats: dict) -> str:
 
     cards = []
     for i, c in enumerate(stats["subquestion_coverage"], start=1):
+        # Same diverging palette the relevance grid uses, so one stance
+        # never means two different colours on one page.
         counts = [
-            ("Supports", len(c["supports"]), _STATUS["good"]),
-            ("Challenges", len(c["challenges"]), _STATUS["critical"]),
-            ("Mixed", len(c["mixed"]), _STATUS["warning"]),
+            ("Supports", len(c["supports"]), STANCE_COLOR_VAR["supports"]),
+            ("Challenges", len(c["challenges"]), STANCE_COLOR_VAR["challenges"]),
+            ("Mixed", len(c["mixed"]), STANCE_COLOR_VAR["mixed"]),
         ]
         if not any(n for _, n, _ in counts):
             body = (
@@ -614,7 +744,6 @@ def render_html(stats: dict, matrix_filename: Optional[str] = None) -> str:
               <p>Across your indexed papers' own reference lists: <strong>{coverage['included_references']} of
               {coverage['total_references']}</strong> cited works ({included_pct:.0%}) are already in your library.</p>
               {coverage_bars}
-              {_frequently_missing_table(coverage['frequently_missing'])}
             </div>
             """
         elif not stats["references_fetched"]:
@@ -631,6 +760,15 @@ def render_html(stats: dict, matrix_filename: Optional[str] = None) -> str:
         <h2>Coverage by sub-question</h2>
         {_render_subquestion_coverage_section(stats)}
 
+        <h2>Relevance to your questions</h2>
+        {_render_relevance_grid_section(stats)}
+
+        <h2>How your papers connect</h2>
+        {_render_connections_section(stats)}
+
+        <h2>Papers worth adding next</h2>
+        {_render_papers_to_consider_section(stats)}
+
         <h2>Where your metadata came from</h2>
         <div class="viz-section">{_bar_chart_svg(_source_rows(stats))}</div>
 
@@ -642,9 +780,6 @@ def render_html(stats: dict, matrix_filename: Optional[str] = None) -> str:
 
         <h2>Citation coverage</h2>
         {coverage_html}
-
-        <h2>Citation network</h2>
-        {_render_citation_network_section(stats["citation_network"])}
 
         <h2>Weaknesses worth a second look</h2>
         {weaknesses_html}
@@ -677,235 +812,346 @@ def render_html(stats: dict, matrix_filename: Optional[str] = None) -> str:
 </html>"""
 
 
-def _network_node_payload(node: dict) -> dict:
-    """Adds the "Find it" links server-side (same helper used elsewhere) so
-    the client-side JS never has to know about DOI/Scholar/ScienceDirect
-    URL formats — it just drops in whatever HTML it's handed."""
-    payload = dict(node)
-    if node["kind"] == "gap" or node.get("confidence") == "unresolved":
-        payload["links_html"] = _find_it_links_html(node["title"], node.get("doi"))
-    elif node.get("doi"):
-        payload["links_html"] = f'<a href="{_esc(doi_url(node["doi"]))}" target="_blank" rel="noopener">DOI</a>'
-    else:
-        payload["links_html"] = ""
-    return payload
+def _truncate(text: str, max_len: int) -> str:
+    text = text or "Untitled"
+    return text if len(text) <= max_len else text[: max_len - 1] + "…"
 
 
-# Vanilla-JS force-directed graph — no charting/graph library, so the page
-# still opens correctly straight off disk. A fixed number of simulation
-# ticks run synchronously up front (a personal library's citation graph is
-# small enough that this settles instantly); dragging a node just moves it
-# and its incident edges directly, no re-simulation needed.
-_GRAPH_JS = """
+# --- Connected articles (arc diagram) -------------------------------------
+#
+# Deliberately NOT a force-directed graph. A force layout gives a personal
+# library of a few dozen papers an unreadable hairball whose shape changes
+# every run and whose labels collide; nothing about the picture answers
+# "which of my papers talk to each other?". An arc diagram fixes the papers
+# on one axis in a meaningful order (oldest first, so citations arc
+# right-to-left), which makes the layout deterministic, label collisions
+# impossible, and the reading trivial: an arc is one paper citing another.
+
+MAX_ARC_HEIGHT = 130
+ARC_VIEWBOX_WIDTH = 700
+ARC_MARGIN = 18
+
+
+def _arc_diagram_svg(internal: dict) -> str:
+    papers = internal["papers"]
+    links = internal["links"]
+    count = len(papers)
+    if count == 0:
+        return '<p class="viz-none">Nothing indexed yet.</p>'
+
+    span = ARC_VIEWBOX_WIDTH - 2 * ARC_MARGIN
+    step = span / (count - 1) if count > 1 else 0
+
+    def x_of(i: int) -> float:
+        return ARC_MARGIN + span / 2 if count == 1 else ARC_MARGIN + i * step
+
+    radii = [min(abs(x_of(l["target"]) - x_of(l["source"])) / 2, MAX_ARC_HEIGHT) for l in links]
+    baseline = 10 + (max(radii) if radii else 0) + 6
+    height = baseline + 34
+
+    parts = [
+        f'<svg id="viz-arc" class="viz-arc" viewBox="0 0 {ARC_VIEWBOX_WIDTH} {height:.0f}" '
+        f'role="img" aria-label="Arc diagram: which indexed papers cite which others, oldest on the left">'
+    ]
+    parts.append(f'<line class="viz-arc-axis" x1="{ARC_MARGIN}" y1="{baseline:.1f}" x2="{ARC_VIEWBOX_WIDTH - ARC_MARGIN}" y2="{baseline:.1f}"/>')
+
+    for i, link in enumerate(links):
+        x1, x2 = x_of(link["source"]), x_of(link["target"])
+        left, right = (x1, x2) if x1 <= x2 else (x2, x1)
+        rx = (right - left) / 2
+        ry = min(rx, MAX_ARC_HEIGHT)
+        # sweep-flag 1 with left->right bulges the arc upward (SVG y grows down).
+        parts.append(
+            f'<path class="viz-arc-link" data-a="{link["source"]}" data-b="{link["target"]}" '
+            f'd="M {left:.1f} {baseline:.1f} A {rx:.1f} {ry:.1f} 0 0 1 {right:.1f} {baseline:.1f}"/>'
+        )
+
+    # Only number the ticks when they will not collide; past that the
+    # tooltip and the table below carry identity instead of a smear of
+    # overlapping digits.
+    label_every = 1 if step >= 15 or count == 1 else max(1, round(count / 20))
+
+    for paper in papers:
+        i = paper["index"]
+        x = x_of(i)
+        linked = paper["cites"] or paper["cited_by"]
+        fill = "var(--viz-accent)" if linked else "var(--viz-muted)"
+        year = f' ({paper["year"]})' if paper["year"] else ""
+        tip = (
+            f'{i + 1}. {paper["title"]}{year} — '
+            + (f'cites {paper["cites"]}, cited by {paper["cited_by"]} in this library' if linked
+               else "no citation link to anything else in this library")
+        )
+        parts.append(f'<g class="viz-arc-node" data-i="{i}"><title>{_esc(tip)}</title>')
+        # An invisible hit column so the target is a comfortable ~24px+
+        # rather than the 9px dot itself, and so the tick number under the
+        # dot is part of the same target instead of a dead gap.
+        hit_w = max(24.0, min(step or 24.0, 34.0))
+        parts.append(
+            f'<rect class="viz-arc-hit" x="{x - hit_w / 2:.1f}" y="{baseline - 14:.1f}" '
+            f'width="{hit_w:.1f}" height="34"/>'
+        )
+        parts.append(f'<circle class="viz-arc-dot" cx="{x:.1f}" cy="{baseline:.1f}" r="4.5" fill="{fill}"/>')
+        if i % label_every == 0:
+            parts.append(f'<text class="viz-arc-tick" x="{x:.1f}" y="{baseline + 15:.1f}">{i + 1}</text>')
+        parts.append("</g>")
+
+    parts.append(
+        f'<text class="viz-arc-caption" x="{ARC_MARGIN}" y="{height - 2:.0f}">oldest</text>'
+        f'<text class="viz-arc-caption" x="{ARC_VIEWBOX_WIDTH - ARC_MARGIN}" y="{height - 2:.0f}" '
+        f'text-anchor="end">newest</text>'
+    )
+    parts.append("</svg>")
+    return "\n".join(parts)
+
+
+# Hover highlight only — the diagram is fully readable without it (native
+# <title> tooltips on every node, plus the link list below), so this
+# enhances and never gates.
+_ARC_JS = """
 (function() {
-  const svg = document.getElementById('viz-graph-svg');
-  const viewport = document.getElementById('viz-graph-viewport');
-  const info = document.getElementById('viz-graph-info');
-  if (!svg || !GRAPH_DATA.nodes.length) { return; }
-  const width = 640, height = 480;
-  const NS = 'http://www.w3.org/2000/svg';
-
-  const nodes = GRAPH_DATA.nodes.map(function(n, i) {
-    const angle = (i / GRAPH_DATA.nodes.length) * Math.PI * 2;
-    const radius = 40 + Math.min(GRAPH_DATA.nodes.length * 6, 160);
-    return Object.assign({}, n, {
-      x: width / 2 + Math.cos(angle) * radius + (Math.random() - 0.5) * 20,
-      y: height / 2 + Math.sin(angle) * radius + (Math.random() - 0.5) * 20,
-      vx: 0, vy: 0, pinned: false,
-    });
-  });
-  const nodeById = {};
-  nodes.forEach(function(n) { nodeById[n.id] = n; });
-  const edges = GRAPH_DATA.edges
-    .map(function(e) { return { source: nodeById[e.source], target: nodeById[e.target] }; })
-    .filter(function(e) { return e.source && e.target; });
-
-  function tick() {
-    for (let i = 0; i < nodes.length; i++) {
-      for (let j = i + 1; j < nodes.length; j++) {
-        const a = nodes[i], b = nodes[j];
-        let dx = a.x - b.x, dy = a.y - b.y;
-        const distSq = Math.max(dx * dx + dy * dy, 1);
-        const force = 700 / distSq;
-        const dist = Math.sqrt(distSq);
-        dx /= dist; dy /= dist;
-        a.vx += dx * force; a.vy += dy * force;
-        b.vx -= dx * force; b.vy -= dy * force;
-      }
-    }
-    edges.forEach(function(e) {
-      let dx = e.target.x - e.source.x, dy = e.target.y - e.source.y;
-      const dist = Math.sqrt(dx * dx + dy * dy) || 0.01;
-      const force = (dist - 110) * 0.02;
-      dx /= dist; dy /= dist;
-      e.source.vx += dx * force; e.source.vy += dy * force;
-      e.target.vx -= dx * force; e.target.vy -= dy * force;
-    });
-    nodes.forEach(function(n) {
-      if (n.pinned) { n.vx = 0; n.vy = 0; return; }
-      n.vx += (width / 2 - n.x) * 0.002;
-      n.vy += (height / 2 - n.y) * 0.002;
-      n.vx *= 0.82; n.vy *= 0.82;
-      n.x += n.vx; n.y += n.vy;
-      n.x = Math.max(16, Math.min(width - 16, n.x));
-      n.y = Math.max(16, Math.min(height - 16, n.y));
-    });
+  const svg = document.getElementById('viz-arc');
+  if (!svg) { return; }
+  const links = Array.prototype.slice.call(svg.querySelectorAll('.viz-arc-link'));
+  const nodes = Array.prototype.slice.call(svg.querySelectorAll('.viz-arc-node'));
+  function clear() {
+    svg.classList.remove('viz-arc-active');
+    links.forEach(function(l) { l.classList.remove('viz-on'); });
+    nodes.forEach(function(n) { n.classList.remove('viz-on'); });
   }
-  for (let i = 0; i < 350; i++) { tick(); }
-
-  function el(tag, attrs) {
-    const e = document.createElementNS(NS, tag);
-    for (const k in attrs) { e.setAttribute(k, attrs[k]); }
-    return e;
-  }
-  function escapeHtml(s) {
-    const d = document.createElement('div');
-    d.textContent = s == null ? '' : String(s);
-    return d.innerHTML;
-  }
-
-  const edgeEls = edges.map(function(e) {
-    const line = el('line', {
-      class: 'viz-graph-edge', x1: e.source.x, y1: e.source.y, x2: e.target.x, y2: e.target.y,
-    });
-    viewport.appendChild(line);
-    return { line: line, edge: e };
-  });
-
-  function colorFor(n) {
-    if (n.kind === 'gap') { return '#898781'; }
-    return n.confidence === 'unresolved' ? '#fab219' : '#0ca30c';
-  }
-
-  const nodeEls = nodes.map(function(n) {
-    const radius = n.kind === 'gap' ? Math.min(6 + (n.cited_by_count || 1) * 1.5, 16) : 9;
-    const g = el('g', { class: 'viz-graph-node', transform: 'translate(' + n.x + ',' + n.y + ')' });
-    const circle = el('circle', { r: radius, fill: colorFor(n) });
-    const label = el('text', { class: 'viz-graph-label', x: radius + 4, y: 4 });
-    const shortTitle = (n.title && n.title.length > 34) ? n.title.slice(0, 33) + '…' : (n.title || 'Untitled');
-    label.textContent = shortTitle;
-    g.appendChild(circle);
-    g.appendChild(label);
-    viewport.appendChild(g);
-    return { g: g, node: n };
-  });
-
-  function selectNode(n) {
-    const connected = { };
-    connected[n.id] = true;
-    edgeEls.forEach(function(pair) {
-      if (pair.edge.source === n) { connected[pair.edge.target.id] = true; }
-      if (pair.edge.target === n) { connected[pair.edge.source.id] = true; }
-    });
-    nodeEls.forEach(function(pair) {
-      pair.g.classList.toggle('viz-graph-dim', !connected[pair.node.id]);
-    });
-    edgeEls.forEach(function(pair) {
-      const on = pair.edge.source === n || pair.edge.target === n;
-      pair.line.classList.toggle('viz-graph-dim', !on);
-    });
-    let html = '<strong>' + escapeHtml(n.title || 'Untitled') + '</strong>';
-    if (n.year) { html += ' (' + n.year + ')'; }
-    html += '<br>';
-    if (n.kind === 'indexed') {
-      html += 'Status: ' + escapeHtml(n.confidence || 'unknown') + '<br>';
-      if (n.file_path) { html += 'File: ' + escapeHtml(n.file_path) + '<br>'; }
-    } else {
-      html += 'Cited by ' + (n.cited_by_count || 0) + ' of your indexed papers — not yet in your library.<br>';
-    }
-    if (n.links_html) { html += n.links_html; }
-    info.innerHTML = html;
-  }
-
-  function clearSelection() {
-    nodeEls.forEach(function(pair) { pair.g.classList.remove('viz-graph-dim'); });
-    edgeEls.forEach(function(pair) { pair.line.classList.remove('viz-graph-dim'); });
-    info.innerHTML = '<span class="viz-muted">Click a node to see details and links.</span>';
-  }
-
-  function toSvgPoint(evt) {
-    const pt = svg.createSVGPoint();
-    pt.x = evt.clientX; pt.y = evt.clientY;
-    return pt.matrixTransform(viewport.getScreenCTM().inverse());
-  }
-
-  nodeEls.forEach(function(pair) {
-    const n = pair.node, g = pair.g;
-    let dragging = false;
-    g.addEventListener('mousedown', function(ev) {
-      dragging = true; n.pinned = true;
-      ev.stopPropagation();
-    });
-    window.addEventListener('mousemove', function(ev) {
-      if (!dragging) { return; }
-      const pt = toSvgPoint(ev);
-      n.x = pt.x; n.y = pt.y;
-      g.setAttribute('transform', 'translate(' + n.x + ',' + n.y + ')');
-      edgeEls.forEach(function(ep) {
-        if (ep.edge.source === n) { ep.line.setAttribute('x1', n.x); ep.line.setAttribute('y1', n.y); }
-        if (ep.edge.target === n) { ep.line.setAttribute('x2', n.x); ep.line.setAttribute('y2', n.y); }
+  nodes.forEach(function(node) {
+    function on() {
+      clear();
+      const i = node.getAttribute('data-i');
+      const partners = {};
+      partners[i] = true;
+      links.forEach(function(link) {
+        const a = link.getAttribute('data-a'), b = link.getAttribute('data-b');
+        if (a === i || b === i) {
+          link.classList.add('viz-on');
+          partners[a] = true;
+          partners[b] = true;
+        }
       });
-    });
-    window.addEventListener('mouseup', function() { dragging = false; });
-    g.addEventListener('click', function(ev) { ev.stopPropagation(); selectNode(n); });
+      nodes.forEach(function(n) {
+        if (partners[n.getAttribute('data-i')]) { n.classList.add('viz-on'); }
+      });
+      svg.classList.add('viz-arc-active');
+    }
+    node.addEventListener('mouseenter', on);
+    node.addEventListener('focus', on);
+    node.setAttribute('tabindex', '0');
   });
-
-  svg.addEventListener('click', clearSelection);
-
-  let scale = 1, tx = 0, ty = 0, panning = false, panStart = null;
-  function applyTransform() {
-    viewport.setAttribute('transform', 'translate(' + tx + ',' + ty + ') scale(' + scale + ')');
-  }
-  svg.addEventListener('mousedown', function(ev) {
-    if (ev.target === svg) { panning = true; panStart = { x: ev.clientX - tx, y: ev.clientY - ty }; }
-  });
-  window.addEventListener('mousemove', function(ev) {
-    if (panning) { tx = ev.clientX - panStart.x; ty = ev.clientY - panStart.y; applyTransform(); }
-  });
-  window.addEventListener('mouseup', function() { panning = false; });
-  svg.addEventListener('wheel', function(ev) {
-    ev.preventDefault();
-    scale = Math.max(0.3, Math.min(3, scale * (ev.deltaY < 0 ? 1.1 : 0.9)));
-    applyTransform();
-  }, { passive: false });
+  svg.addEventListener('mouseleave', clear);
 })();
 """
 
 
-def _render_citation_network_section(network: dict) -> str:
-    nodes = network.get("nodes") or []
-    if not nodes:
+def _render_connections_section(stats: dict) -> str:
+    internal = stats["internal_links"]
+    papers = internal["papers"]
+    links = internal["links"]
+
+    if not stats["references_fetched"]:
         return (
-            '<div class="viz-section"><p class="viz-none">No citation data yet — re-run '
-            "<code>index-library --fetch-references</code> to build this.</p></div>"
+            '<div class="viz-section"><p class="viz-muted">No reference lists fetched yet, so there is nothing '
+            "to connect — re-run <code>index-library --fetch-references</code> to build this view.</p></div>"
+        )
+    if not links:
+        return (
+            f'<div class="viz-section"><p class="viz-none">None of your {len(papers)} indexed paper(s) cites '
+            "another one in this library. That is common early on, and it means each paper stands alone rather "
+            "than forming a conversation — the papers below are where that conversation is happening "
+            "instead.</p></div>"
         )
 
-    payload = {"nodes": [_network_node_payload(n) for n in nodes], "edges": network.get("edges") or []}
-    # `</` inside a title (extremely unlikely, but titles are arbitrary text)
-    # could otherwise close the <script> tag early.
-    graph_json = _json.dumps(payload).replace("</", "<\\/")
-
-    legend = """
-    <div class="viz-graph-legend">
-      <span><span class="viz-graph-dot" style="background:#0ca30c"></span> Verified, in your library</span>
-      <span><span class="viz-graph-dot" style="background:#fab219"></span> Unresolved, in your library</span>
-      <span><span class="viz-graph-dot" style="background:#898781"></span> Cited by 2+ papers, missing (bigger = cited more)</span>
-    </div>
-    """
+    by_index = {p["index"]: p for p in papers}
+    link_rows = "".join(
+        "<tr><td>{src}</td><td>{tgt}</td></tr>".format(
+            src=_esc("{}. {}".format(l["source"] + 1, _truncate(by_index[l["source"]]["title"], 60))),
+            tgt=_esc("{}. {}".format(l["target"] + 1, _truncate(by_index[l["target"]]["title"], 60))),
+        )
+        for l in links
+    )
+    key_rows = "".join(
+        "<tr><td>{n}</td><td>{title}</td><td>{year}</td><td>{cites}</td><td>{cited_by}</td></tr>".format(
+            n=paper["index"] + 1,
+            title=_esc(paper["title"]),
+            year=_esc(paper["year"] or "—"),
+            cites=paper["cites"],
+            cited_by=paper["cited_by"],
+        )
+        for paper in papers
+    )
 
     return f"""
     <div class="viz-section">
-      <p class="viz-muted">Drag the background to pan, scroll to zoom, drag a node to reposition it, click a node for details and links.</p>
-      {legend}
-      <svg id="viz-graph-svg" viewBox="0 0 640 480" class="viz-graph-svg" role="img" aria-label="citation network">
-        <g id="viz-graph-viewport"></g>
-      </svg>
-      <div id="viz-graph-info" class="viz-graph-info"><span class="viz-muted">Click a node to see details and links.</span></div>
+      <p class="viz-lede">Each dot is one indexed paper, oldest on the left. An arc joins two papers when one
+      cites the other — so an arc is a conversation happening inside your own library.
+      <strong>{internal['connected_count']}</strong> of <strong>{len(papers)}</strong> paper(s) are connected
+      to at least one other, across <strong>{len(links)}</strong> citation link(s);
+      <strong>{internal['isolated_count']}</strong> stand alone.</p>
+      <div class="viz-legend">
+        <span><span class="viz-swatch" style="background:var(--viz-accent)"></span> Connected to another paper here</span>
+        <span><span class="viz-swatch" style="background:var(--viz-muted)"></span> No link to anything here</span>
+      </div>
+      <div class="viz-scroll">{_arc_diagram_svg(internal)}</div>
+      <p class="viz-muted">Hover or tab to a dot to isolate its links.</p>
+      <details class="viz-details">
+        <summary>Which paper is which — all {len(papers)}, numbered as on the axis</summary>
+        <table class="viz-table">
+          <thead><tr><th>#</th><th>Paper</th><th>Year</th><th>Cites</th><th>Cited by</th></tr></thead>
+          <tbody>{key_rows}</tbody>
+        </table>
+      </details>
+      <details class="viz-details">
+        <summary>All {len(links)} link(s), as a table</summary>
+        <table class="viz-table">
+          <thead><tr><th>This paper…</th><th>…cites this one</th></tr></thead>
+          <tbody>{link_rows}</tbody>
+        </table>
+      </details>
     </div>
-    <script>
-    const GRAPH_DATA = {graph_json};
-    {_GRAPH_JS}
-    </script>
+    <script>{_ARC_JS}</script>
+    """
+
+
+# --- Papers worth adding next ---------------------------------------------
+
+
+def _render_papers_to_consider_section(stats: dict) -> str:
+    """The "what should I read next" answer: references that several of your
+    own papers cite but that you do not have. A ranked bar is the right form
+    for it — the question is purely one of magnitude ("how many of mine cite
+    this?"), which a network node's size answers far less legibly."""
+    coverage = stats["coverage"]
+    gaps = coverage["frequently_missing"]
+
+    if not stats["references_fetched"]:
+        return (
+            '<div class="viz-section"><p class="viz-muted">Not analyzed yet — re-run '
+            "<code>index-library --fetch-references</code> to see which works your papers keep citing "
+            "that you do not have.</p></div>"
+        )
+    if not gaps:
+        return (
+            '<div class="viz-section"><p class="viz-none">No work is cited by two or more of your papers '
+            "without already being in your library — nothing obvious to add next.</p></div>"
+        )
+
+    rows = []
+    for gap in gaps:
+        year = " ({})".format(gap["year"]) if gap.get("year") else ""
+        rows.append(((gap["title"] or "Untitled") + year, len(gap["cited_by"]), "var(--viz-accent)"))
+    chart = _bar_chart_svg(rows, width=700, label_width=330, bar_height=22, gap=8)
+    cited_total = sum(len(g["cited_by"]) for g in gaps)
+
+    return f"""
+    <div class="viz-section">
+      <p class="viz-lede">Works your own papers cite that are <em>not</em> in your library yet, ranked by how
+      many of your papers cite each one — a work several of your sources lean on is usually foundational.
+      <strong>{len(gaps)}</strong> such work(s), accounting for <strong>{cited_total}</strong> citation(s)
+      from across your library.</p>
+      {chart}
+      {_frequently_missing_table(gaps)}
+    </div>
+    """
+
+
+# --- Relevance to your questions (heatmap) --------------------------------
+
+
+def _stance_cell_html(stance: str, title: str, question_label: str) -> str:
+    cls = "viz-cell viz-cell-unrelated" if stance == "unrelated" else "viz-cell"
+    style = "" if stance == "unrelated" else f' style="background:{STANCE_COLOR_VAR[stance]}"'
+    glyph = STANCE_GLYPH[stance] or "·"
+    tip = f"{title} — {question_label}: {STANCE_LABEL[stance]}"
+    return f'<td class="{cls}"{style} title="{_esc(tip)}"><span aria-hidden="true">{glyph}</span>' \
+           f'<span class="viz-sr">{_esc(STANCE_LABEL[stance])}</span></td>'
+
+
+def _render_relevance_grid_section(stats: dict) -> str:
+    rows = stats.get("relevance_rows") or []
+    sub_questions = stats.get("sub_questions") or []
+    research_question = stats.get("research_question")
+
+    if not rows:
+        return '<div class="viz-section"><p class="viz-none">Nothing indexed yet.</p></div>'
+    if not sub_questions and not research_question:
+        return (
+            '<div class="viz-section"><p class="viz-muted">No research question or sub-questions configured, '
+            "so there is nothing to score relevance against — pass <code>--question</code>/"
+            "<code>--sub-questions</code>, or set them once via <code>configure</code>, and re-run.</p></div>"
+        )
+
+    shown = rows[:MAX_HEATMAP_ROWS]
+    headers = ['<th class="viz-grid-rowhead">Paper</th>', '<th class="viz-grid-year-col">Year</th>']
+    if research_question:
+        headers.append('<th title="Keyword overlap with your research question">Relevance</th>')
+    for i, question in enumerate(sub_questions, start=1):
+        headers.append(f'<th title="{_esc(question)}">Q{i}</th>')
+
+    body = []
+    for row in shown:
+        cells = [
+            f'<td class="viz-grid-rowhead" title="{_esc(row["title"])}">'
+            f'<span class="viz-grid-title">{_esc(row["title"])}</span></td>',
+            f'<td class="viz-grid-year-col">{_esc(row["year"] or "")}</td>',
+        ]
+        if research_question:
+            score = row["relevance"] or 0.0
+            # A bar, not a second color scale: relevance is magnitude while
+            # the stance cells beside it are polarity, and two color ramps
+            # in one grid would blur into each other.
+            cells.append(
+                '<td><div class="viz-relbar">'
+                f'<div class="viz-relbar-track"><div class="viz-relbar-fill" style="width:{min(score, 1.0) * 100:.0f}%"></div></div>'
+                f'<span class="viz-relbar-value">{score:.2f}</span></div></td>'
+            )
+        for qi, stance in enumerate(row["stances"], start=1):
+            cells.append(_stance_cell_html(stance, row["title"], f"Q{qi}"))
+        body.append(f"<tr>{''.join(cells)}</tr>")
+
+    legend = "".join(
+        f'<span><span class="viz-swatch" style="background:{STANCE_COLOR_VAR[key]}"></span>'
+        f"{STANCE_GLYPH[key] or '·'} {STANCE_LABEL[key]}</span>"
+        for key in ("supports", "challenges", "mixed", "unrelated")
+    ) if sub_questions else ""
+
+    qkey = ""
+    if sub_questions:
+        items = "".join(f"<li>{_esc(q)}</li>" for q in sub_questions)
+        qkey = f'<ol class="viz-qkey">{items}</ol>'
+
+    truncated = ""
+    if len(rows) > len(shown):
+        truncated = (
+            f'<p class="viz-muted">Showing the {len(shown)} most relevant of {len(rows)} paper(s) — '
+            "the companion Excel matrix has every row.</p>"
+        )
+
+    engaged_none = sum(1 for r in rows if sub_questions and r["engaged"] == 0)
+    lede_tail = (
+        f" <strong>{engaged_none}</strong> paper(s) speak to none of them."
+        if sub_questions and engaged_none
+        else ""
+    )
+
+    return f"""
+    <div class="viz-section">
+      <p class="viz-lede">Every indexed paper against every question you are asking, most relevant first —
+      so a paper that earns its place is obvious at the top, and one that does not is obvious at the
+      bottom.{lede_tail}</p>
+      <div class="viz-legend">{legend}</div>
+      <div class="viz-scroll">
+        <table class="viz-grid">
+          <thead><tr>{''.join(headers)}</tr></thead>
+          <tbody>{''.join(body)}</tbody>
+        </table>
+      </div>
+      {truncated}
+      {qkey}
+    </div>
     """
 
 

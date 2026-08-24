@@ -1,9 +1,14 @@
-from thesis_tools.library.citation_graph import build_citation_network, build_coverage, build_mermaid_mindmap
+from thesis_tools.library.citation_graph import (
+    build_citation_network,
+    build_coverage,
+    build_internal_links,
+    build_mermaid_mindmap,
+)
 from thesis_tools.library.index_store import LibraryEntry
 from thesis_tools.sources.base import Paper
 
 
-def _entry(title, doi, references=None):
+def _entry(title, doi, references=None, year=2022):
     return LibraryEntry(
         file_path=f"/downloads/{title}.pdf",
         file_hash=f"hash-{title}",
@@ -12,7 +17,7 @@ def _entry(title, doi, references=None):
         indexed_at="2026-01-01T00:00:00",
         confidence="verified-doi",
         doi=doi,
-        paper=Paper(title=title, doi=doi, year=2022),
+        paper=Paper(title=title, doi=doi, year=year),
         references=references or [],
     )
 
@@ -122,3 +127,69 @@ def test_build_citation_network_empty_when_no_references_fetched():
     network = build_citation_network(entries, coverage)
     assert len(network["nodes"]) == 2
     assert network["edges"] == []
+
+
+def test_build_internal_links_orders_papers_oldest_first():
+    entries = [
+        _entry("Newest", "10.1/c", year=2022),
+        _entry("Oldest", "10.1/a", year=2001),
+        _entry("Middle", "10.1/b", year=2010),
+    ]
+    result = build_internal_links(entries)
+    assert [p["title"] for p in result["papers"]] == ["Oldest", "Middle", "Newest"]
+    assert [p["index"] for p in result["papers"]] == [0, 1, 2]
+
+
+def test_build_internal_links_puts_undated_papers_last():
+    entries = [_entry("Undated", "10.1/u", year=None), _entry("Dated", "10.1/a", year=2001)]
+    result = build_internal_links(entries)
+    assert [p["title"] for p in result["papers"]] == ["Dated", "Undated"]
+
+
+def test_build_internal_links_records_link_and_counts():
+    entries = [
+        _entry("Old", "10.1/old", year=2000),
+        _entry("New", "10.1/new", year=2020, references=[{"doi": "10.1/old", "title": "Old", "year": 2000}]),
+    ]
+    result = build_internal_links(entries)
+    assert result["links"] == [{"source": 1, "target": 0}]  # New (index 1) cites Old (index 0)
+    assert result["papers"][1]["cites"] == 1
+    assert result["papers"][0]["cited_by"] == 1
+    assert result["connected_count"] == 2
+    assert result["isolated_count"] == 0
+
+
+def test_build_internal_links_keeps_isolated_papers():
+    entries = [_entry("Alone", "10.1/a", year=2000), _entry("Also Alone", "10.1/b", year=2001)]
+    result = build_internal_links(entries)
+    assert len(result["papers"]) == 2
+    assert result["links"] == []
+    assert result["connected_count"] == 0
+    assert result["isolated_count"] == 2
+
+
+def test_build_internal_links_ignores_references_outside_the_library():
+    entries = [_entry("A", "10.1/a", references=[{"doi": "10.9/elsewhere", "title": "Elsewhere", "year": 1999}])]
+    assert build_internal_links(entries)["links"] == []
+
+
+def test_build_internal_links_no_self_loops_or_duplicates():
+    entries = [
+        _entry("Old", "10.1/old", year=2000),
+        _entry(
+            "New",
+            "10.1/new",
+            year=2020,
+            references=[
+                {"doi": "10.1/old", "title": "Old", "year": 2000},
+                {"doi": "10.1/old", "title": "Old (again)", "year": 2000},
+                {"doi": "10.1/new", "title": "New", "year": 2020},  # cites itself
+            ],
+        ),
+    ]
+    assert build_internal_links(entries)["links"] == [{"source": 1, "target": 0}]
+
+
+def test_build_internal_links_dedupes_the_same_paper_indexed_twice():
+    entries = [_entry("Dup", "10.1/dup", year=2000), _entry("Dup (copy)", "10.1/dup", year=2000)]
+    assert len(build_internal_links(entries)["papers"]) == 1

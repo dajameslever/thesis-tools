@@ -364,6 +364,34 @@ instead of the heuristic):
   sub-question with zero supporting papers is called out explicitly (and
   flagged below in "Weaknesses") rather than the page just being
   library-wide stats with no connection to your actual research questions.
+- **Relevance to your questions** — a grid with one row per paper and one
+  column per question: a bar for how relevant the paper is to your overall
+  research question, then a coloured cell per sub-question showing whether
+  that paper supports it (`+`), challenges it (`−`), gives mixed evidence
+  (`~`), or says nothing useful (`·`). Rows are sorted most-relevant first,
+  so the papers earning their place are at the top and the ones you should
+  probably drop are at the bottom. Supports/challenges use a diverging
+  blue↔red pair rather than green/red — a paper challenging your assumption
+  is the opposite pole of one supporting it, not a bad outcome — and every
+  cell carries its glyph and a written label too, so the colour never
+  carries the meaning on its own.
+- **How your papers connect** — an arc diagram of your library's *internal*
+  citation structure: each dot is one indexed paper, ordered oldest to
+  newest, and an arc joins two papers when one cites the other. Hover or tab
+  a dot to isolate just its links. It reports how many of your papers are
+  connected to at least one other, how many citation links there are, and
+  how many stand alone — a paper nothing else in your library talks to is a
+  real finding, not an absence to hide. (This replaced a force-directed
+  graph, which turned a few dozen papers into an unreadable hairball whose
+  shape changed every run; an arc diagram fixes the papers on a meaningful
+  axis, so the layout is deterministic and labels can't collide.)
+- **Papers worth adding next** — the works your own papers cite that you
+  *don't* have, ranked by how many of your papers cite each one, since
+  something several of your sources lean on is usually foundational. Each
+  gets a direct DOI link when one's known, plus pre-filled Google Scholar
+  and ScienceDirect search links as a fallback — the same deep-search
+  pattern used for "Needs manual review" — so you can track one down in one
+  click instead of retyping the title. Needs `--fetch-references`.
 - **Where your metadata came from** — a bar chart of how many papers were
   verified via each source (Crossref, Semantic Scholar, OpenAlex, arXiv) vs.
   resolved from local file metadata alone.
@@ -372,22 +400,8 @@ instead of the heuristic):
 - **Publication years** — a bar chart across your library (binned into
   5-year buckets if the range is wide).
 - **Citation coverage** — the same included-vs-missing breakdown as the
-  Markdown report's "Citation coverage" section, plus the frequently-missing
-  table (needs `--fetch-references` to have been used at least once). Each
-  missing reference gets a direct DOI link when one's known, plus
-  pre-filled Google Scholar and ScienceDirect search links as a fallback —
-  the same deep-search pattern used for "Needs manual review" — so you can
-  go track one down in one click instead of retyping the title.
-- **Citation network** — an interactive, draggable graph of who cites whom:
-  every indexed paper as a node (green = verified, amber = unresolved),
-  plus a node for each reference cited by 2+ of your papers but still
-  missing from your library (gray, sized by how often it's cited). An edge
-  from paper A to paper B means A cites B — including edges **between your
-  own indexed papers**, which is the one thing the Markdown report's
-  Mermaid mind-map doesn't show. Drag the background to pan, scroll to
-  zoom, drag a node to reposition it, and click a node to see its details
-  and the same DOI/Scholar/ScienceDirect links. Pure inline SVG + vanilla
-  JS — no charting library, so it works opened straight off disk.
+  Markdown report's "Citation coverage" section (needs `--fetch-references`
+  to have been used at least once).
 - **Weaknesses worth a second look** — computed flags, not just raw counts:
   unresolved files, possible duplicate downloads, a high share of papers
   with no abstract on record, over-reliance on a single source (70%+ from
@@ -556,7 +570,7 @@ thesis_tools/
     extract.py         Per-file-type text/metadata extraction (PDF/docx/txt/HTML)
     identify.py         DOI/title resolution against Crossref + Semantic Scholar
     index_store.py       The JSON-backed local index (library/index.json)
-    citation_graph.py    Citation-coverage computation + Mermaid mind-map
+    citation_graph.py    Citation-coverage computation, internal citation links, Mermaid mind-map
     organizer.py         Optional copy-only file organizer
     report.py            Renders Part 2's Markdown report
     library_indexer.py   Orchestrates Part 2

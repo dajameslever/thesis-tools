@@ -195,3 +195,73 @@ def build_mermaid_mindmap(entries: List[LibraryEntry], coverage: dict) -> str:
                 lines.append(f"    {src} --> {target}")
 
     return "\n".join(lines)
+
+
+def build_internal_links(entries: List[LibraryEntry]) -> dict:
+    """Which of your own papers cite which others — the "connected articles"
+    view, laid out for an arc diagram rather than a force-directed graph.
+
+    Papers are returned in a deterministic reading order (oldest first,
+    unknown year last, ties broken by title) so citations mostly arc
+    right-to-left: newer work citing older. That ordering is the whole point
+    of the form — a force layout has no such meaning and, past a handful of
+    papers, degenerates into an unreadable hairball.
+
+    A paper that neither cites nor is cited by anything else in the library
+    is still returned (as an isolated node): "nothing else here talks to
+    this" is a real finding about a library, not an absence to hide.
+    """
+    seen: Dict[str, LibraryEntry] = {}
+    for entry in entries:
+        seen.setdefault(_entry_node_id(entry), entry)
+
+    ordered = sorted(
+        seen.items(),
+        # `year is None` sorts False(0) before True(1), so dated papers come
+        # first and undated ones collect at the end rather than at year 0.
+        key=lambda kv: (kv[1].paper.year is None, kv[1].paper.year or 0, kv[1].paper.title or ""),
+    )
+    index_by_id = {node_id: i for i, (node_id, _) in enumerate(ordered)}
+
+    links: List[dict] = []
+    seen_links = set()
+    cites_count = [0] * len(ordered)
+    cited_by_count = [0] * len(ordered)
+
+    for node_id, entry in ordered:
+        source = index_by_id[node_id]
+        for ref in entry.references:
+            doi = (ref.get("doi") or "").strip().lower()
+            if not doi:
+                continue
+            target = index_by_id.get(f"doi:{doi}")
+            if target is None or target == source:
+                continue
+            key = (source, target)
+            if key in seen_links:
+                continue
+            seen_links.add(key)
+            links.append({"source": source, "target": target})
+            cites_count[source] += 1
+            cited_by_count[target] += 1
+
+    papers = [
+        {
+            "index": i,
+            "title": entry.paper.title,
+            "year": entry.paper.year,
+            "doi": entry.doi or entry.paper.doi,
+            "confidence": entry.confidence,
+            "cites": cites_count[i],
+            "cited_by": cited_by_count[i],
+        }
+        for i, (_, entry) in enumerate(ordered)
+    ]
+    connected = sum(1 for p in papers if p["cites"] or p["cited_by"])
+
+    return {
+        "papers": papers,
+        "links": links,
+        "connected_count": connected,
+        "isolated_count": len(papers) - connected,
+    }
