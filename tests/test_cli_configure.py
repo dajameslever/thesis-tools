@@ -330,3 +330,79 @@ def test_literature_review_explicit_llm_model_applies_to_classification_too(tmp_
     assert rc == 0
     assert captured["llm_model"] == "claude-opus-5"
     assert captured["extraction_llm_model"] == "claude-opus-5"
+
+
+def test_literature_review_writes_html_alongside_markdown(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    cache_path = tmp_path / "report.md.papers.json"
+    cache_path.write_text(json.dumps({"sources_used": [], "papers": [{
+        "title": "Digital transformation reduces environmental impact", "authors": ["Ada Lovelace"],
+        "year": 2023, "doi": "10.1/a",
+        "abstract": "We find a significant effect of digital transformation on environmental impact, consistent with theory.",
+    }]}), encoding="utf-8")
+
+    rc = main([
+        "literature-review",
+        "--field", "Digital Transformation",
+        "--title", "DT and sustainability",
+        "--question", "Does digital transformation reduce environmental impact?",
+        "--sub-questions", "Does digital transformation reduce environmental impact?",
+        "--topic-cache", str(cache_path),
+        "--project-file", str(tmp_path / "project.json"),
+        "--output", str(tmp_path / "review.md"),
+        "--no-llm", "--non-interactive",
+    ])
+
+    assert rc == 0
+    assert (tmp_path / "review.md").is_file()
+    assert (tmp_path / "review.html").is_file()
+
+
+def test_literature_review_no_html_flag(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    cache_path = tmp_path / "report.md.papers.json"
+    cache_path.write_text(json.dumps({"sources_used": [], "papers": [{
+        "title": "A paper about X", "authors": ["Ada Lovelace"], "year": 2023, "doi": "10.1/a",
+        "abstract": "A significant effect of X on Y, consistent with theory.",
+    }]}), encoding="utf-8")
+
+    rc = main([
+        "literature-review",
+        "--field", "X", "--title", "Y",
+        "--question", "Does X affect Y?",
+        "--sub-questions", "Does X affect Y?",
+        "--topic-cache", str(cache_path),
+        "--project-file", str(tmp_path / "project.json"),
+        "--output", str(tmp_path / "review.md"),
+        "--no-html", "--no-llm", "--non-interactive",
+    ])
+
+    assert rc == 0
+    assert (tmp_path / "review.md").is_file()
+    assert not (tmp_path / "review.html").exists()
+
+
+def test_literature_review_words_per_question_flag(tmp_path, monkeypatch):
+    from unittest.mock import patch
+
+    monkeypatch.chdir(tmp_path)
+    cache_path = tmp_path / "report.md.papers.json"
+    cache_path.write_text('{"sources_used": [], "papers": [{"title": "A", "authors": [], "year": 2020}]}', encoding="utf-8")
+
+    captured = {}
+    with patch("thesis_tools.cli.run_literature_review",
+               side_effect=lambda i: (captured.update(w=i.words_per_question), "x.md")[1]):
+        rc = main([
+            "literature-review",
+            "--field", "X", "--title", "Y",
+            "--sub-questions", "Does X happen?",
+            "--topic-cache", str(cache_path),
+            "--project-file", str(tmp_path / "project.json"),
+            "--words-per-question", "1800",
+            "--non-interactive",
+        ])
+
+    assert rc == 0
+    assert captured["w"] == 1800

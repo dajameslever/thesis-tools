@@ -11,7 +11,7 @@ from __future__ import annotations
 import os
 import re
 import sys
-from typing import Optional
+from typing import List, Optional
 
 from . import env as _env
 
@@ -101,21 +101,58 @@ def _trim_to_last_sentence(text: str) -> str:
     return text
 
 
-def ask(client, system: str, user: str, model: str = DEFAULT_MODEL, max_tokens: int = 300) -> Optional[str]:
-    """Single-turn request. Returns the text response, or None on any failure."""
+# Past this, a non-streaming request risks an HTTP timeout waiting for the
+# whole response to be generated before a single byte comes back, so the
+# request is streamed and reassembled instead. Streaming costs nothing extra
+# and behaves identically for short answers, so the threshold is only about
+# not paying the timeout risk when there is no need.
+STREAMING_MAX_TOKENS_THRESHOLD = 1500
+
+
+def ask(
+    client,
+    system: str,
+    user: str,
+    model: str = DEFAULT_MODEL,
+    max_tokens: int = 300,
+    errors: Optional[List[str]] = None,
+) -> Optional[str]:
+    """Single-turn request. Returns the text response, or None on any failure.
+
+    Pass `errors` to have the reason for a failure appended to it. Returning
+    a bare None is fine where the caller has a real fallback (a heuristic
+    summary is a legitimate substitute for a Claude-written one), but where
+    the fallback is markedly worse the caller needs to be able to say what
+    went wrong rather than silently shipping the lesser output as though
+    nothing had happened.
+    """
     try:
-        message = client.messages.create(
-            model=model,
-            max_tokens=max_tokens,
-            system=system,
-            messages=[{"role": "user", "content": user}],
-        )
+        if max_tokens >= STREAMING_MAX_TOKENS_THRESHOLD:
+            with client.messages.stream(
+                model=model,
+                max_tokens=max_tokens,
+                system=system,
+                messages=[{"role": "user", "content": user}],
+            ) as stream:
+                message = stream.get_final_message()
+        else:
+            message = client.messages.create(
+                model=model,
+                max_tokens=max_tokens,
+                system=system,
+                messages=[{"role": "user", "content": user}],
+            )
         text = "".join(block.text for block in message.content if getattr(block, "type", None) == "text").strip()
         if not text:
+            if errors is not None:
+                errors.append("the model returned an empty response")
             return None
         if getattr(message, "stop_reason", None) == "max_tokens":
             text = _trim_to_last_sentence(text)
         return text or None
     except Exception as exc:
-        print(f"  [llm] request failed ({exc})", file=sys.stderr)
+        reason = f"{type(exc).__name__}: {exc}"
+        print(f"  [llm] request failed ({reason})", file=sys.stderr)
+        if errors is not None:
+            errors.append(reason)
         return None

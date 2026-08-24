@@ -586,7 +586,7 @@ def test_literature_review_inputs_default_to_the_cheap_classification_tier():
 # same module object, so patching "llm.ask" through both paths leaves only one
 # mock in place. Patch it once and tell the calls apart by their system prompt.
 _STANCE_MARKER = "You assess how a paper"
-_SYNTHESIS_MARKER = "You write ONE literature-review paragraph"
+_SYNTHESIS_MARKER = "You write ONE SECTION of a literature review"
 
 
 def _calls_matching(mock, marker):
@@ -681,3 +681,182 @@ def test_without_a_cache_path_every_run_reclassifies(mock_ask, mock_get_client, 
     _run()
     _run()
     assert len(_calls_matching(mock_ask, _STANCE_MARKER)) == 2
+
+
+# --- prompt budgeting -----------------------------------------------------
+
+
+def test_fit_paper_texts_leaves_everything_alone_when_it_fits():
+    from thesis_tools.literature_review import _fit_paper_texts
+
+    texts = ["a" * 10, "b" * 20]
+    fitted, trimmed = _fit_paper_texts(texts, budget=1000)
+    assert fitted == texts
+    assert trimmed == 0
+
+
+def test_fit_paper_texts_lets_short_papers_donate_their_unused_share():
+    from thesis_tools.literature_review import _fit_paper_texts
+
+    fitted, trimmed = _fit_paper_texts(["a" * 10, "b" * 5000], budget=100)
+    assert fitted[0] == "a" * 10  # short paper untouched
+    assert len(fitted[1]) == 90  # gets the leftover, not a flat 50
+    assert trimmed == 1
+
+
+def test_fit_paper_texts_never_drops_a_paper_entirely():
+    from thesis_tools.literature_review import _fit_paper_texts
+
+    fitted, trimmed = _fit_paper_texts(["x" * 5000] * 4, budget=400)
+    assert len(fitted) == 4
+    assert all(len(t) > 0 for t in fitted)
+    assert sum(len(t) for t in fitted) <= 400
+    assert trimmed == 4
+
+
+# --- a failed section must not masquerade as a written one ----------------
+
+
+def _two_sided_source(tmp_path):
+    supports = Paper(title="Digital transformation reduces environmental impact", year=2023,
+                     authors=["Ada Lovelace"], doi="10.1/a",
+                     abstract="We find a significant effect of digital transformation on environmental impact, consistent with theory.")
+    challenges = Paper(title="No effect of digital transformation on environmental impact", year=2024,
+                       authors=["Bob Nul"], doi="10.1/b",
+                       abstract="Contrary to expectations, we found no significant effect of digital transformation on environmental impact.")
+    path = tmp_path / "src.json"
+    _write_topic_cache(path, [supports, challenges])
+    return path
+
+
+def _review_inputs(tmp_path, source, **overrides):
+    kwargs = dict(
+        field="Digital Transformation",
+        working_title="DT and sustainability",
+        research_question="Does digital transformation reduce environmental impact?",
+        sub_questions=["Does digital transformation reduce environmental impact?"],
+        paper_sources=[str(source)],
+        output_path=str(tmp_path / "review.md"),
+        use_llm=True,
+        min_relevance=0.0,
+    )
+    kwargs.update(overrides)
+    return LiteratureReviewInputs(**kwargs)
+
+
+@patch("thesis_tools.llm.get_client")
+@patch("thesis_tools.llm.ask")
+def test_failed_section_is_flagged_in_the_section_and_the_header(mock_ask, mock_get_client, tmp_path):
+    """The reported bug: every synthesis call failed, each section silently
+    became a bullet dump, and the header still said "Claude-written prose"."""
+    mock_get_client.return_value = object()
+
+    def _ask(client, system, user, model=None, max_tokens=300, errors=None):
+        if _SYNTHESIS_MARKER in system:
+            if errors is not None:
+                errors.append("BadRequestError: prompt is too long")
+            return None
+        if _STANCE_MARKER in system:
+            return "1: supports - confirms it."
+        return "Some prose."
+
+    mock_ask.side_effect = _ask
+    run_literature_review(_review_inputs(tmp_path, _two_sided_source(tmp_path)))
+
+    text = (tmp_path / "review.md").read_text()
+    assert "Claude-written prose, targeting" not in text
+    assert "partially failed" in text
+    assert "This section is a fallback outline, not a written review" in text
+    assert "BadRequestError: prompt is too long" in text
+
+
+@patch("thesis_tools.llm.get_client")
+@patch("thesis_tools.llm.ask")
+def test_successful_sections_report_the_target_length(mock_ask, mock_get_client, tmp_path):
+    mock_get_client.return_value = object()
+    mock_ask.side_effect = lambda c, system, u, model=None, max_tokens=300, errors=None: (
+        "1: supports - confirms it." if _STANCE_MARKER in system else "A written section."
+    )
+    run_literature_review(_review_inputs(tmp_path, _two_sided_source(tmp_path), words_per_question=1500))
+
+    text = (tmp_path / "review.md").read_text()
+    assert "Claude-written prose, targeting ~1500 words per sub-question" in text
+    assert "partially failed" not in text
+    assert "fallback outline" not in text
+
+
+@patch("thesis_tools.llm.get_client")
+@patch("thesis_tools.llm.ask")
+def test_words_per_question_drives_the_prompt_and_the_token_budget(mock_ask, mock_get_client, tmp_path):
+    mock_get_client.return_value = object()
+    mock_ask.side_effect = lambda c, system, u, model=None, max_tokens=300, errors=None: (
+        "1: supports - confirms it." if _STANCE_MARKER in system else "A written section."
+    )
+    run_literature_review(_review_inputs(tmp_path, _two_sided_source(tmp_path), words_per_question=1600))
+
+    call = _calls_matching(mock_ask, _SYNTHESIS_MARKER)[0]
+    assert "roughly 1600 words" in call.args[1]
+    assert call.kwargs["max_tokens"] == 4000  # 1600 * 2.5, room to run long
+
+
+def test_default_target_length_is_a_section_not_a_paragraph():
+    from thesis_tools.literature_review import DEFAULT_WORDS_PER_QUESTION, MAX_PAPERS_PER_SYNTHESIS_CALL
+
+    assert DEFAULT_WORDS_PER_QUESTION >= 1000
+    # A 1000+ word section needs more than an outline's worth of sources.
+    assert MAX_PAPERS_PER_SYNTHESIS_CALL >= 10
+
+
+def test_heuristic_fallback_summarises_rather_than_dumping_the_title_page(tmp_path, monkeypatch):
+    """A locally indexed PDF's first 220 characters are the title page and
+    author affiliations, which is what the reported draft was full of."""
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    paper = Paper(
+        title="Sustainable accounting in the digital age", year=2026, authors=["Hamood Al-Hattami"], doi="10.1/a",
+        full_text_excerpt=(
+            "[Page 1]\nSustainable accounting in the digital age: Integrating technology for a greener future\n"
+            "Hamood Mohammed Al-Hattami a,b,*\na College of Business Administration, A'Sharqiyah University, Ibra, Oman\n"
+            "This study finds a significant effect of digital transformation on environmental impact, consistent with theory."
+        ),
+    )
+    source = tmp_path / "src.json"
+    _write_topic_cache(source, [paper])
+    run_literature_review(
+        _review_inputs(tmp_path, source, use_llm=False,
+                       sub_questions=["Does digital transformation reduce environmental impact?"])
+    )
+    text = (tmp_path / "review.md").read_text()
+    assert "College of Business Administration" not in text
+    assert "significant effect of digital transformation" in text
+
+
+# --- HTML companion -------------------------------------------------------
+
+
+def test_html_version_is_written_alongside_the_markdown(tmp_path, monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    run_literature_review(_review_inputs(tmp_path, _two_sided_source(tmp_path), use_llm=False))
+
+    html_path = tmp_path / "review.html"
+    assert html_path.is_file()
+    html = html_path.read_text()
+    assert "<!doctype html>" in html
+    assert "Literature Review" in html
+    assert "Contents" in html  # navigation for a long draft
+
+
+def test_no_html_writes_only_markdown(tmp_path, monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    run_literature_review(_review_inputs(tmp_path, _two_sided_source(tmp_path), use_llm=False, write_html=False))
+    assert (tmp_path / "review.md").is_file()
+    assert not (tmp_path / "review.html").exists()
+
+
+def test_html_output_path_can_be_redirected(tmp_path, monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    target = tmp_path / "elsewhere" / "review.html"
+    run_literature_review(
+        _review_inputs(tmp_path, _two_sided_source(tmp_path), use_llm=False, html_output_path=str(target))
+    )
+    assert target.is_file()
+    assert not (tmp_path / "review.html").exists()

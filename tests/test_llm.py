@@ -42,9 +42,13 @@ def test_academic_style_note_mentions_key_constraints():
 
 def test_academic_style_note_is_embedded_in_content_prompts():
     from thesis_tools.summarize import _LLM_SYSTEM_PROMPT
-    from thesis_tools.literature_review import _INTRO_SYSTEM_PROMPT, _SYNTHESIS_SYSTEM_PROMPT, _CONCLUSION_SYSTEM_PROMPT
+    from thesis_tools.literature_review import (
+        _CONCLUSION_SYSTEM_PROMPT,
+        _INTRO_SYSTEM_PROMPT,
+        _synthesis_system_prompt,
+    )
 
-    for prompt in (_LLM_SYSTEM_PROMPT, _INTRO_SYSTEM_PROMPT, _SYNTHESIS_SYSTEM_PROMPT, _CONCLUSION_SYSTEM_PROMPT):
+    for prompt in (_LLM_SYSTEM_PROMPT, _INTRO_SYSTEM_PROMPT, _synthesis_system_prompt(1200), _CONCLUSION_SYSTEM_PROMPT):
         assert llm.ACADEMIC_STYLE_NOTE in prompt
 
 
@@ -123,3 +127,64 @@ def test_default_model_constants_are_the_intended_tiers():
     # is a better fit for the cheaper/faster Haiku than for Sonnet or Opus.
     assert llm.DEFAULT_MODEL == "claude-sonnet-5"
     assert llm.DEFAULT_EXTRACTION_MODEL == "claude-haiku-4-5"
+
+
+def test_ask_streams_when_max_tokens_is_large():
+    """A long generation on a non-streaming request risks an HTTP timeout
+    before the first byte arrives."""
+    client = MagicMock()
+    block = MagicMock()
+    block.type = "text"
+    block.text = "A long section."
+    message = MagicMock()
+    message.content = [block]
+    message.stop_reason = "end_turn"
+    client.messages.stream.return_value.__enter__.return_value.get_final_message.return_value = message
+
+    result = llm.ask(client, "sys", "user", max_tokens=llm.STREAMING_MAX_TOKENS_THRESHOLD)
+
+    assert result == "A long section."
+    client.messages.stream.assert_called_once()
+    client.messages.create.assert_not_called()
+
+
+def test_ask_does_not_stream_for_small_requests():
+    client = MagicMock()
+    block = MagicMock()
+    block.type = "text"
+    block.text = "short"
+    response = MagicMock()
+    response.content = [block]
+    response.stop_reason = "end_turn"
+    client.messages.create.return_value = response
+
+    assert llm.ask(client, "sys", "user", max_tokens=300) == "short"
+    client.messages.create.assert_called_once()
+    client.messages.stream.assert_not_called()
+
+
+def test_ask_reports_the_failure_reason_when_asked():
+    """Callers whose fallback is markedly worse than the real answer need to
+    be able to say what went wrong instead of shipping it silently."""
+    client = MagicMock()
+    client.messages.create.side_effect = RuntimeError("prompt is too long")
+    errors = []
+
+    assert llm.ask(client, "sys", "user", errors=errors) is None
+    assert len(errors) == 1
+    assert "prompt is too long" in errors[0]
+    assert "RuntimeError" in errors[0]
+
+
+def test_ask_reports_an_empty_response_as_a_failure():
+    client = MagicMock()
+    block = MagicMock()
+    block.type = "text"
+    block.text = "   "
+    response = MagicMock()
+    response.content = [block]
+    client.messages.create.return_value = response
+    errors = []
+
+    assert llm.ask(client, "sys", "user", errors=errors) is None
+    assert "empty response" in errors[0]

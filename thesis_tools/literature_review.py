@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import datetime as _dt
 import json
+import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -26,8 +27,9 @@ from typing import Dict, List, Optional, Tuple
 from . import llm
 from .citations import STYLES, format_citation, in_text_citation
 from .dedupe import dedupe_papers
-from .relevance import score_relevance
+from .relevance import score_relevance, tokenize
 from .sources.base import Paper
+from .review_html import render_review_html
 from .subquestions import SubquestionAnalysis, analyze_subquestions
 
 DISCLAIMER = (
@@ -39,6 +41,25 @@ DISCLAIMER = (
     "actual PDF before using it. Verify every claim, rewrite this in your own voice, and treat it "
     "as a structured starting point, not a citable final draft."
 )
+
+
+# A section of 1000-2000 words needs real material behind it; six papers is
+# an outline's worth, not a literature review's.
+MAX_PAPERS_PER_SYNTHESIS_CALL = 14
+
+# Target length for each sub-question's section. A literature review chapter
+# runs to roughly this per question — the previous 150-250 words produced a
+# paragraph, not a section.
+DEFAULT_WORDS_PER_QUESTION = 1200
+
+# Total characters of paper text allowed into one synthesis prompt. Nothing
+# is trimmed while the papers fit inside this, which is the normal case —
+# but a dozen full papers can run past any model's context window, and the
+# failure mode there is the whole call erroring out and the section
+# collapsing to a bullet list. Budgeting keeps the call alive, and the draft
+# says when trimming happened rather than hiding it.
+MAX_PROMPT_TEXT_CHARS = 300_000
+
 
 
 @dataclass
@@ -61,7 +82,12 @@ class LiteratureReviewInputs:
     extraction_llm_model: str = llm.DEFAULT_EXTRACTION_MODEL
     stance_cache_path: Optional[str] = None
     min_relevance: float = 0.1
+    words_per_question: int = DEFAULT_WORDS_PER_QUESTION
     output_path: Optional[str] = None
+    # Written alongside the Markdown draft unless disabled — same content,
+    # styled for reading in a browser rather than in a text editor.
+    html_output_path: Optional[str] = None
+    write_html: bool = True
 
 
 def _load_papers_from_source(path: str) -> List[Paper]:
@@ -118,7 +144,34 @@ def _draft_intro(inputs: LiteratureReviewInputs, num_papers: int, client) -> str
     )
 
 
-MAX_PAPERS_PER_SYNTHESIS_CALL = 6
+def _fit_paper_texts(texts: List[str], budget: int = MAX_PROMPT_TEXT_CHARS) -> Tuple[List[str], int]:
+    """Fit each paper's text into a shared character budget, returning the
+    (possibly trimmed) texts and how many were trimmed.
+
+    Shares are equal, but a short paper donates what it does not use to the
+    longer ones, so a budget is only ever spent on text that exists. Whole
+    papers are never dropped: a review that quietly stopped considering a
+    source would be worse than one that considered a long source in part.
+    """
+    if sum(len(t) for t in texts) <= budget or not texts:
+        return list(texts), 0
+
+    remaining_budget = budget
+    remaining = sorted(range(len(texts)), key=lambda i: len(texts[i]))
+    allowance = {}
+    for position, index in enumerate(remaining):
+        share = remaining_budget // (len(remaining) - position)
+        allowance[index] = min(len(texts[index]), share)
+        remaining_budget -= allowance[index]
+
+    fitted, trimmed = [], 0
+    for i, text in enumerate(texts):
+        if len(text) > allowance[i]:
+            trimmed += 1
+            fitted.append(text[: allowance[i]])
+        else:
+            fitted.append(text)
+    return fitted, trimmed
 
 # Grounded in standard literature-review guidance (e.g. Purdue OWL, university
 # writing-center synthesis guides): synthesize by theme, don't summarize
@@ -130,10 +183,17 @@ MAX_PAPERS_PER_SYNTHESIS_CALL = 6
 # real debate rather than a one-line "sources disagree" aside — a literature
 # review is expected to critically evaluate competing evidence, not just
 # report that it exists.
-_SYNTHESIS_SYSTEM_PROMPT = (
-    "You write ONE literature-review paragraph (150-250 words) addressing the given sub-question, "
-    "using ONLY the material provided below for each paper. This is for an academic literature "
-    "review, so follow standard literature-review conventions:\n"
+_SYNTHESIS_SYSTEM_PROMPT_TEMPLATE = (
+    "You write ONE SECTION of a literature review — roughly {words} words, several paragraphs — "
+    "addressing the given sub-question, using ONLY the material provided below for each paper. "
+    "This is a full section of a thesis chapter, not a summary paragraph: develop the argument "
+    "across paragraphs, each making its own point and building on the last, the way a published "
+    "review does. Do not pad to reach the length; if the material genuinely does not support a "
+    "section this long, write what it does support and say plainly where the evidence runs out.\n"
+    "- STRUCTURE IT. Open by framing what is at stake in this sub-question, then work through the "
+    "evidence thematically across several paragraphs, and close by stating where the weight of "
+    "evidence currently sits. Do not use sub-headings or bullet points — continuous academic prose "
+    "only.\n"
     "- SYNTHESIZE, don't summarize source-by-source. Never write a 'laundry list' where every "
     "sentence starts with an author's name (e.g. 'Smith (2020) found X. Jones (2019) found Y.'). "
     "Instead, lead with the claim or theme, and weave citations in as support — explicitly comparing, "
@@ -169,6 +229,10 @@ _SYNTHESIS_SYSTEM_PROMPT = (
 )
 
 
+def _synthesis_system_prompt(words: int) -> str:
+    return _SYNTHESIS_SYSTEM_PROMPT_TEMPLATE.format(words=words)
+
+
 def _citation_marker_for(paper: Paper, style: str, ref_number_by_key: Dict[str, int]) -> str:
     """The exact in-text citation marker to hand the LLM (or use in the
     heuristic fallback) for this paper, in whatever style the student
@@ -185,21 +249,56 @@ def _citation_marker_for(paper: Paper, style: str, ref_number_by_key: Dict[str, 
     return in_text_citation(paper, style)
 
 
-def _paper_block(paper: Paper, stance_label: str, citation_marker: str = "") -> str:
+# Title lines, author names and affiliations all come out of a PDF as short
+# fragments; anything this short is structure, not argument.
+_MIN_SNIPPET_CHUNK_CHARS = 40
+MAX_FALLBACK_SNIPPET_CHARS = 320
+_CHUNK_SPLIT_RE = re.compile(r"(?<=[.!?])\s+|\n+")
+
+
+def _fallback_snippet(paper: Paper, question: str) -> str:
+    """The most on-question passage of a paper, for the no-prose fallback.
+
+    Not simply the first N characters: on a locally indexed PDF that is the
+    title page and author affiliations, which is what made the fallback
+    outline unreadable. Not extractive_summary() either — that splits on
+    sentence punctuation, and extracted PDF text has line breaks where
+    sentences end, so a title block comes back as one "sentence" and is
+    returned whole.
+    """
+    source = paper.abstract or paper.full_text_excerpt or ""
+    chunks = [c.strip() for c in _CHUNK_SPLIT_RE.split(source) if len(c.strip()) >= _MIN_SNIPPET_CHUNK_CHARS]
+    if not chunks:
+        return source.strip()[:MAX_FALLBACK_SNIPPET_CHARS]
+
+    question_terms = set(tokenize(question))
+    best = max(
+        range(len(chunks)),
+        key=lambda i: (len(question_terms & set(tokenize(chunks[i]))), -i),
+    )
+    snippet = " ".join(chunks[best : best + 2])
+    return snippet[:MAX_FALLBACK_SNIPPET_CHARS].rstrip()
+
+
+def _prompt_text_for(paper: Paper) -> str:
+    return paper.full_text_excerpt or paper.abstract or ""
+
+
+def _paper_block(paper: Paper, stance_label: str, citation_marker: str = "", text: Optional[str] = None) -> str:
     author = paper.authors[0].split()[-1] if paper.authors and paper.authors[0].split() else "Unknown"
     marker_note = f" Cite this paper in-text using exactly: {citation_marker}." if citation_marker else ""
     lines = [f"- {author} ({paper.year or 'n.d.'}), stance: {stance_label}.{marker_note} Title: {paper.title}."]
     if paper.abstract:
         lines.append(f'  Abstract (verbatim): "{paper.abstract}"')
-    if paper.full_text_excerpt:
-        # Whole extracted document, not a truncated prefix — a debate-style
-        # paragraph weighing both sides needs the actual argument each paper
-        # makes, not just whatever happened to fall in the first N
-        # characters. extract.py itself no longer truncates a document's
-        # text on the way in, so this stays consistent end to end.
+    excerpt = paper.full_text_excerpt if text is None else (text if paper.full_text_excerpt else None)
+    if excerpt:
+        # The whole extracted document by default, not a fixed short prefix —
+        # a section that weighs both sides needs each paper's actual
+        # argument, not whatever fell in the first few thousand characters.
+        # _fit_paper_texts only trims when a batch would not otherwise fit.
         lines.append(
             '  Excerpt from the original document, verbatim, "[Page N]" markers included where known '
-            f'(quote this exact wording only, citing the nearest page marker): "{paper.full_text_excerpt}"'
+            f'(quote this exact wording only, citing the nearest page marker): "{excerpt}"'
         )
     if not paper.abstract and not paper.full_text_excerpt:
         lines.append("  (no abstract or text available — do not make specific claims about this paper's findings)")
@@ -233,18 +332,26 @@ def _select_papers_for_synthesis(question: str, grouped: Dict[str, List[Paper]],
     return selected
 
 
-def _draft_synthesis_paragraph(
+def _draft_synthesis_section(
     question: str,
     grouped: Dict[str, List[Paper]],
     inputs: LiteratureReviewInputs,
     client,
     ref_number_by_key: Dict[str, int],
-) -> Tuple[str, List[Paper]]:
+) -> Tuple[str, List[Paper], Optional[str]]:
+    """Returns (section text, papers cited, failure reason).
+
+    The failure reason is what makes a degraded section honest: the heuristic
+    fallback is a bullet list of snippets, which is a categorically worse
+    thing than a written section — shipping it silently under a header
+    claiming "Claude-written prose" misrepresents the draft.
+    """
     if not (grouped["supports"] or grouped["challenges"] or grouped["mixed"]):
         return (
             "_No paper in the current sources speaks directly to this sub-question — "
             "a potential gap worth targeting with a follow-up search._",
             [],
+            None,
         )
 
     # Cap how many papers go into one call — keeps prompt size (and cost)
@@ -255,26 +362,45 @@ def _draft_synthesis_paragraph(
     labeled = _select_papers_for_synthesis(question, grouped, MAX_PAPERS_PER_SYNTHESIS_CALL)
     cited_papers = [p for _, p in labeled]
 
+    failure: Optional[str] = None
     if client is not None:
-        blocks = [_paper_block(p, label, _citation_marker_for(p, inputs.style, ref_number_by_key)) for label, p in labeled]
+        texts = [_prompt_text_for(p) for _, p in labeled]
+        fitted, trimmed = _fit_paper_texts(texts)
+        blocks = [
+            _paper_block(p, label, _citation_marker_for(p, inputs.style, ref_number_by_key), text)
+            for (label, p), text in zip(labeled, fitted)
+        ]
         user_message = f"Sub-question: {question}\n\nPapers:\n" + "\n".join(blocks)
-        # Headroom past the requested 150-250 words: a target word count is
-        # not a hard cap, and running a bit long is far better than getting
-        # cut off mid-sentence (llm.ask() trims to the last full sentence on
-        # truncation, but more budget means that almost never triggers).
-        result = llm.ask(client, _SYNTHESIS_SYSTEM_PROMPT, user_message, model=inputs.llm_model, max_tokens=700)
+        # Generous headroom over the target: a word count is a target, not a
+        # cap, and running long beats being cut off mid-sentence.
+        errors: List[str] = []
+        result = llm.ask(
+            client,
+            _synthesis_system_prompt(inputs.words_per_question),
+            user_message,
+            model=inputs.llm_model,
+            max_tokens=max(int(inputs.words_per_question * 2.5), 1500),
+            errors=errors,
+        )
         if result:
-            return result, cited_papers
+            if trimmed:
+                result += (
+                    f"\n\n_Note: the full text of {trimmed} of these {len(labeled)} source(s) was too long "
+                    "to send in full, so this section was written from as much of each as would fit._"
+                )
+            return result, cited_papers, None
+        failure = errors[0] if errors else "the request returned nothing"
 
     # Heuristic fallback: an honest structured outline, not prose — still
     # using each paper's real citation marker so even this no-LLM path
-    # respects whatever style was configured.
+    # respects whatever style was configured, and its own extractive summary
+    # rather than the first 220 characters of a PDF, which on a locally
+    # indexed paper is the title page and author affiliations.
     lines = []
     for label, p in labeled:
         marker = _citation_marker_for(p, inputs.style, ref_number_by_key)
-        snippet = (p.abstract or p.full_text_excerpt or "")[:220].strip()
-        lines.append(f"- **{label.capitalize()}** — {marker}: {snippet}")
-    return "\n".join(lines), cited_papers
+        lines.append(f"- **{label.capitalize()}** — {marker}: {_fallback_snippet(p, question)}")
+    return "\n".join(lines), cited_papers, failure
 
 
 _CONCLUSION_SYSTEM_PROMPT = (
@@ -418,7 +544,8 @@ def run_literature_review(inputs: LiteratureReviewInputs) -> str:
         f"- **Real text available for quoting:** {with_full_text} of {len(relevant)} paper(s) "
         f"(indexed by Part 2) — the rest have only an abstract, so claims about them are paraphrased, not quoted"
     )
-    lines.append(f"- **Drafting mode:** {'Claude-written prose' if client else 'heuristic structured outline (no ANTHROPIC_API_KEY, or --no-llm)'}")
+    drafting_mode_index = len(lines)
+    lines.append("")  # filled in below, once it is known how many sections actually got written
     lines.append("")
 
     lines.append("## Introduction")
@@ -428,6 +555,7 @@ def run_literature_review(inputs: LiteratureReviewInputs) -> str:
 
     cited_papers_by_key: Dict[str, Paper] = {}
     no_coverage: List[str] = []
+    degraded: List[Tuple[str, str]] = []
     # IEEE numbers a paper by order of first citation, not alphabetically —
     # populated as _draft_synthesis_paragraph hands out markers below, then
     # reused to number the reference list the same way.
@@ -437,8 +565,16 @@ def run_literature_review(inputs: LiteratureReviewInputs) -> str:
         grouped = analysis.grouped_papers(question, relevant)
         lines.append(f"## {i}. {question}")
         lines.append("")
-        paragraph, cited = _draft_synthesis_paragraph(question, grouped, inputs, client, ref_number_by_key)
-        lines.append(paragraph)
+        section, cited, failure = _draft_synthesis_section(question, grouped, inputs, client, ref_number_by_key)
+        if failure:
+            degraded.append((question, failure))
+            lines.append(
+                f"> ⚠️ **This section is a fallback outline, not a written review.** The request to Claude "
+                f"failed ({failure}), so what follows is a bullet list of the relevant sources instead of "
+                "prose. Re-run to try again."
+            )
+            lines.append("")
+        lines.append(section)
         lines.append("")
         if not cited:
             no_coverage.append(question)
@@ -467,11 +603,32 @@ def run_literature_review(inputs: LiteratureReviewInputs) -> str:
         lines.append(format_citation(paper, inputs.style, ref_number=ref_number))
         lines.append("")
 
+    # Now that every section has been attempted, the header can say what
+    # actually happened rather than what was intended.
+    if not client:
+        mode = "heuristic structured outline (no ANTHROPIC_API_KEY, or --no-llm)"
+    elif degraded:
+        mode = (
+            f"⚠️ **partially failed** — {len(degraded)} of {len(inputs.sub_questions)} section(s) fell back "
+            "to a bullet outline because the request to Claude failed; see the warnings below"
+        )
+    else:
+        mode = f"Claude-written prose, targeting ~{inputs.words_per_question} words per sub-question"
+    lines[drafting_mode_index] = f"- **Drafting mode:** {mode}"
+
     report_text = "\n".join(lines)
 
     output_path = Path(inputs.output_path) if inputs.output_path else _default_output_path()
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(report_text, encoding="utf-8")
+
+    if inputs.write_html:
+        # Rendered from the same Markdown that was just written, so the two
+        # can never drift apart.
+        html_path = Path(inputs.html_output_path) if inputs.html_output_path else output_path.with_suffix(".html")
+        html_path.parent.mkdir(parents=True, exist_ok=True)
+        html_path.write_text(render_review_html(report_text), encoding="utf-8")
+        print(f"HTML version: {html_path}", file=sys.stderr)
 
     return str(output_path)
 

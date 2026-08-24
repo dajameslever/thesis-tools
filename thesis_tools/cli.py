@@ -16,7 +16,7 @@ from .library.index_store import LibraryIndex
 from .library.library_indexer import LibraryIndexerInputs, run_library_indexer
 from .library.citation_graph import DEFAULT_MIN_GAP_RELEVANCE
 from .library.visualize import build_literature_matrix, compute_stats, render_html
-from .literature_review import LiteratureReviewInputs, run_literature_review
+from .literature_review import DEFAULT_WORDS_PER_QUESTION, LiteratureReviewInputs, run_literature_review
 from .project import DEFAULT_PROJECT_PATH, ProjectState
 from .sources import ALL_SOURCES
 from .subquestions import generate_subquestions
@@ -482,6 +482,16 @@ def _build_parser() -> argparse.ArgumentParser:
     lr.set_defaults(use_stance_cache=True)
     lr.add_argument("--min-relevance", type=float, default=0.1, help="Drop papers scoring below this relevance to the research question (0-1, default: 0.1)")
     lr.add_argument("-o", "--output", dest="output_path", help="Where to write the Markdown draft (default: output/literature-review-<timestamp>.md)")
+    lr.add_argument(
+        "--words-per-question",
+        type=int,
+        default=None,
+        help=f"Target length of each sub-question's section (default: {DEFAULT_WORDS_PER_QUESTION}). "
+        "A thesis literature review typically runs 1000-2000 words per question",
+    )
+    lr.add_argument("--html-output", dest="html_output_path", default=None, help="Where to write the HTML version (default: alongside the Markdown draft)")
+    lr.add_argument("--no-html", dest="write_html", action="store_false", help="Write only the Markdown draft, no HTML version")
+    lr.set_defaults(write_html=True)
     lr.add_argument("--project-file", default=DEFAULT_PROJECT_PATH, help=f"Where shared project state lives (default: {DEFAULT_PROJECT_PATH})")
     lr.add_argument("--non-interactive", action="store_true", help="Don't prompt for missing values; fail instead if --field/--title (and sub-questions) can't be resolved")
 
@@ -851,6 +861,10 @@ def _run_literature_review_command(args: argparse.Namespace) -> int:
     if args.llm_model or project.llm_model:
         inputs.extraction_llm_model = args.llm_model or project.llm_model
     inputs.stance_cache_path = _stance_cache_for_sources(args, project, inputs.use_llm)
+    if args.words_per_question is not None:
+        inputs.words_per_question = args.words_per_question
+    inputs.write_html = args.write_html
+    inputs.html_output_path = args.html_output_path
 
     try:
         report_path = run_literature_review(inputs)

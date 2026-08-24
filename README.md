@@ -536,7 +536,10 @@ list only contains papers actually cited in the draft.
   ones.
 - **With Claude** (default — uses `claude-sonnet-5`; override with
   `--llm-model claude-opus-5` if a particular draft is worth the extra cost):
-  writes a real 150-250 word synthesis paragraph following standard
+  writes a **full section of roughly 1,200 words** (`--words-per-question`;
+  a thesis literature review typically runs 1,000-2,000 words per question),
+  developed across several paragraphs rather than one summary paragraph,
+  following standard
   literature-review conventions — synthesizing by theme rather than
   listing sources one by one (no "Smith (2020) found X. Jones (2019) found
   Y." laundry-listing), and using a *sparing* direct quotation only when
@@ -547,6 +550,25 @@ list only contains papers actually cited in the draft.
   throwaway line noting a disagreement exists.
 - **Without Claude** (`--no-llm`, or no API key): a structured bullet outline
   grouped by stance instead of prose — still useful, just not narrative.
+
+**You get both a Markdown file and an HTML page.** The `.md` is the one to
+edit; the `.html` beside it is the one to read — a sticky contents list, a
+measured line length, and print styling, which matters once a draft runs to
+several thousand words. `--html-output` moves it, `--no-html` skips it.
+
+**A failed section never masquerades as a written one.** If a request to
+Claude fails, that section falls back to a bullet outline of its sources —
+but the section says so, quoting the actual error, and the draft header
+reports the run as partially failed rather than claiming "Claude-written
+prose". The fallback outline now quotes each paper's most on-question
+passage rather than its first 220 characters, which on a locally indexed PDF
+is the title page and author affiliations.
+
+**The prompt is budgeted so the call survives.** Each paper's full extracted
+text goes in, untrimmed, whenever the batch fits; when it would not, the
+budget is shared out — short papers donate what they do not use, no paper is
+ever dropped entirely — and the section says how many sources were trimmed.
+Long sections are streamed, so a slow generation cannot time out.
 
 **Classification isn't paid for twice.** Working out each paper's stance on
 each sub-question is the same job `visualize-library` already does, so Part
@@ -624,6 +646,7 @@ thesis_tools/
   subquestions.py     Sub-question generation + supports/challenges/mixed stance analysis
   stance_cache.py     Persists analyze_subquestions()'s per-paper Claude classifications so an
                       unchanged paper/question set is never reclassified (used by visualize-library)
+  review_html.py      Renders Part 3's draft as a self-contained HTML page
   citations.py        APA / MLA / Chicago / Harvard / IEEE reference-list formatting, plus
                       in_text_citation() for the parenthetical/numbered marker used inline
   report.py           Renders Part 1's Markdown report
