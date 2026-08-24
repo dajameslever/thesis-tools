@@ -186,3 +186,21 @@ def test_guess_title_from_text_skips_short_and_uppercase_lines():
 
 def test_guess_title_from_text_none_when_nothing_fits():
     assert guess_title_from_text("PDF\nHI\n") is None
+
+
+def test_fetch_references_for_doi_maps_papers_to_lightweight_records():
+    from unittest.mock import MagicMock
+
+    from thesis_tools.library.identify import fetch_references_for_doi
+    from thesis_tools.sources.base import Paper
+
+    client = MagicMock()
+    client.lookup_references.return_value = [
+        Paper(title="A cited work", doi="10.1/ref", year=2019),
+        Paper(title="", doi="10.1/untitled", year=2018),  # nothing to show a reader
+    ]
+
+    refs = fetch_references_for_doi("10.1234/x", semantic_scholar_client=client)
+
+    client.lookup_references.assert_called_once_with("10.1234/x")
+    assert refs == [{"doi": "10.1/ref", "title": "A cited work", "year": 2019}]

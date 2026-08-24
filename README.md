@@ -317,6 +317,13 @@ The resulting report (`library/library.md` by default, alongside a
   alongside a Mermaid mind-map diagram of what's included (✅) vs. missing (❌).
 - **Possible duplicate downloads** (the same DOI saved to two files).
 
+`--fetch-references` can be added later. Re-running with it on an already
+indexed library backfills only what is missing: each entry that has a
+resolved DOI but no reference list gets one fetched, with no re-extraction
+and no re-identification of files that haven't changed. Entries that never
+resolved a DOI have nothing to fetch against and are reported as such, since
+those are the same unresolved files that hollow out every other view.
+
 Rerunning is incremental: unchanged files (by content hash) are skipped, so
 you can point it at a growing Downloads folder repeatedly. Use `--rescan` to
 force re-extraction, `--prune` to drop entries whose file was deleted, and

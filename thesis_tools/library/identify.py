@@ -99,6 +99,21 @@ def _reference_dicts(papers: List[Paper]) -> List[dict]:
     return [{"doi": p.doi, "title": p.title, "year": p.year} for p in papers if p.title]
 
 
+def fetch_references_for_doi(
+    doi: str, semantic_scholar_client: Optional[SemanticScholarClient] = None
+) -> List[dict]:
+    """The reference list for one already-identified paper, in the same
+    lightweight shape identify_document() stores.
+
+    Split out from identify_document() so an existing index entry can have
+    its references backfilled without re-extracting the PDF and re-running
+    the whole DOI/title identification it already passed once. Returns []
+    on any lookup failure, same as everything else here.
+    """
+    client = semantic_scholar_client or SemanticScholarClient()
+    return _reference_dicts(client.lookup_references(doi))
+
+
 def local_heuristic_fallback(doc: ExtractedDocument, filename_fallback: str) -> IdentifiedPaper:
     """Build a record from the file itself alone — no network involved. This
     is what a normal, no-match run of identify_document() falls back to; it's

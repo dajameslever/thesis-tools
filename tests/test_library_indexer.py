@@ -476,3 +476,91 @@ def test_index_known_papers_upserts_into_existing_index(tmp_path):
     assert len(index.entries) == 2
     titles = {e.paper.title for e in index.entries}
     assert titles == {"Already Indexed", "Freshly Downloaded"}
+
+
+def _indexed_library(tmp_path, monkeypatch, doi="10.1234/x", confidence="verified-doi"):
+    """Index one file once, so the follow-up run sees an unchanged file."""
+    monkeypatch.chdir(tmp_path)
+    downloads = tmp_path / "downloads"
+    downloads.mkdir(exist_ok=True)
+    (downloads / "paper.pdf").write_bytes(b"%PDF-1.4 fake")
+    index_path = tmp_path / "library" / "index.json"
+
+    from thesis_tools.library.extract import ExtractedDocument
+
+    with patch("thesis_tools.library.library_indexer.extract_document") as mock_extract, patch(
+        "thesis_tools.library.library_indexer.identify_document",
+        side_effect=_fake_identify(doi=doi, confidence=confidence),
+    ):
+        mock_extract.return_value = ExtractedDocument(
+            text="some text", title_hint=None, author_hint=None, file_type="pdf"
+        )
+        run_library_indexer(LibraryIndexerInputs(folder=str(downloads), index_path=str(index_path)))
+    return downloads, index_path
+
+
+def test_fetch_references_backfills_an_already_indexed_library(tmp_path, monkeypatch):
+    """The reported bug: --fetch-references on a library that was already
+    indexed did nothing at all, because every file was skipped as unchanged
+    before identification ran — so the citation views kept telling the user
+    to run the command they had just run."""
+    downloads, index_path = _indexed_library(tmp_path, monkeypatch)
+    assert LibraryIndex.load(index_path).entries[0].references == []
+
+    with patch(
+        "thesis_tools.library.library_indexer.fetch_references_for_doi",
+        return_value=[{"doi": "10.1/ref", "title": "A cited work", "year": 2019}],
+    ) as mock_fetch, patch("thesis_tools.library.library_indexer.extract_document") as mock_extract:
+        stats = run_library_indexer(
+            LibraryIndexerInputs(folder=str(downloads), index_path=str(index_path), fetch_references=True)
+        )
+
+    mock_fetch.assert_called_once_with("10.1234/x")
+    # Backfilling must not re-extract or re-identify — the file itself is
+    # unchanged, only its reference list was missing.
+    mock_extract.assert_not_called()
+    assert stats["skipped"] == 1 and stats["new"] == 0
+    assert stats["references_backfilled"] == 1
+
+    entry = LibraryIndex.load(index_path).entries[0]
+    assert [r["title"] for r in entry.references] == ["A cited work"]
+
+
+def test_fetch_references_does_not_refetch_what_it_already_has(tmp_path, monkeypatch):
+    downloads, index_path = _indexed_library(tmp_path, monkeypatch)
+    with patch(
+        "thesis_tools.library.library_indexer.fetch_references_for_doi",
+        return_value=[{"doi": "10.1/ref", "title": "A cited work", "year": 2019}],
+    ):
+        run_library_indexer(
+            LibraryIndexerInputs(folder=str(downloads), index_path=str(index_path), fetch_references=True)
+        )
+
+    with patch("thesis_tools.library.library_indexer.fetch_references_for_doi") as mock_fetch:
+        stats = run_library_indexer(
+            LibraryIndexerInputs(folder=str(downloads), index_path=str(index_path), fetch_references=True)
+        )
+    mock_fetch.assert_not_called()
+    assert stats["references_backfilled"] == 0
+
+
+def test_unresolved_entries_are_reported_rather_than_looked_up(tmp_path, monkeypatch):
+    """An entry that never resolved a DOI has nothing to ask Semantic Scholar
+    about — it should be counted and named, not silently passed over."""
+    downloads, index_path = _indexed_library(tmp_path, monkeypatch, doi=None, confidence="unresolved")
+
+    with patch("thesis_tools.library.library_indexer.fetch_references_for_doi") as mock_fetch:
+        stats = run_library_indexer(
+            LibraryIndexerInputs(folder=str(downloads), index_path=str(index_path), fetch_references=True)
+        )
+    mock_fetch.assert_not_called()
+    assert stats["references_backfilled"] == 0
+    assert stats["references_unavailable"] == 1
+
+
+def test_unchanged_files_are_untouched_without_fetch_references(tmp_path, monkeypatch):
+    downloads, index_path = _indexed_library(tmp_path, monkeypatch)
+    with patch("thesis_tools.library.library_indexer.fetch_references_for_doi") as mock_fetch:
+        stats = run_library_indexer(LibraryIndexerInputs(folder=str(downloads), index_path=str(index_path)))
+    mock_fetch.assert_not_called()
+    assert stats["skipped"] == 1

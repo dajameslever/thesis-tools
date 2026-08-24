@@ -15,7 +15,7 @@ from ..sources.base import Paper, slug_for_paper
 from ..subquestions import analyze_subquestions
 from ..summarize import summarize
 from .extract import extract_document
-from .identify import identify_document, local_heuristic_fallback
+from .identify import fetch_references_for_doi, identify_document, local_heuristic_fallback
 from .index_store import LibraryEntry, LibraryIndex, hash_file
 from .organizer import organize_entries
 from .report import build_library_report
@@ -103,6 +103,7 @@ def run_library_indexer(inputs: LibraryIndexerInputs) -> Dict[str, object]:
         )
 
     new_count = skipped_count = failed_count = 0
+    backfilled_count = no_doi_count = 0
 
     for i, path in enumerate(files, start=1):
         progress = f"[{i}/{len(files)}]"
@@ -114,7 +115,33 @@ def run_library_indexer(inputs: LibraryIndexerInputs) -> Dict[str, object]:
             continue
 
         if not inputs.rescan and file_hash in existing_by_hash:
-            print(f"{progress} {path.name} — unchanged since last run, skipping", file=sys.stderr)
+            existing = existing_by_hash[file_hash]
+            # An unchanged file is skipped — but --fetch-references on an
+            # already-indexed library used to skip right past this point and
+            # change nothing, so the citation views kept telling the user to
+            # run the very command they had just run. The file's content is
+            # what's unchanged; its reference list is simply absent, and
+            # fetching it needs no re-extraction and no re-identification —
+            # just one lookup against the DOI this entry already resolved.
+            existing_doi = existing.doi or existing.paper.doi
+            if inputs.fetch_references and not existing.references and existing_doi:
+                print(f"{progress} {path.name} — unchanged, fetching its reference list...", file=sys.stderr)
+                existing.references = fetch_references_for_doi(existing_doi)
+                print(f"  -> {len(existing.references)} reference(s) fetched", file=sys.stderr)
+                backfilled_count += 1
+            elif inputs.fetch_references and not existing.references:
+                # No DOI ever resolved for this file, so there is nothing to
+                # ask Semantic Scholar about. Counted and reported rather
+                # than passed over in silence — it is the same unresolved
+                # files that hollow out every other view.
+                print(
+                    f"{progress} {path.name} — unchanged, but unresolved (no DOI), so it has no "
+                    "reference list to fetch",
+                    file=sys.stderr,
+                )
+                no_doi_count += 1
+            else:
+                print(f"{progress} {path.name} — unchanged since last run, skipping", file=sys.stderr)
             skipped_count += 1
             continue
 
@@ -184,6 +211,15 @@ def run_library_indexer(inputs: LibraryIndexerInputs) -> Dict[str, object]:
         index.upsert(entry)
         existing_by_hash[file_hash] = entry
         new_count += 1
+
+    if inputs.fetch_references:
+        with_refs = sum(1 for e in index.entries if e.references)
+        print(
+            f"Reference lists: {with_refs} of {len(index.entries)} entries now have one"
+            + (f" ({backfilled_count} fetched just now)" if backfilled_count else "")
+            + (f"; {no_doi_count} unresolved entry/entries have no DOI to fetch against" if no_doi_count else ""),
+            file=sys.stderr,
+        )
 
     pruned_count = index.prune_missing() if inputs.prune else 0
 
@@ -257,6 +293,8 @@ def run_library_indexer(inputs: LibraryIndexerInputs) -> Dict[str, object]:
         "skipped": skipped_count,
         "failed": failed_count,
         "pruned": pruned_count,
+        "references_backfilled": backfilled_count,
+        "references_unavailable": no_doi_count,
         "total": len(index.entries),
         "organized": len(organized),
     }
