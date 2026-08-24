@@ -668,14 +668,15 @@ itself and sub-questions with no coverage at all (i.e. candidate
 contributions for your thesis) — and a reference list containing only the
 papers actually cited in the draft.
 
-### The second output: an executive summary
+### The other output: an executive summary
 
-Every run writes a second pair of files alongside the draft —
-`<draft>.exec-summary.md` and `.html`. Same evidence, organised for someone
-who will not read the review: a supervisor, a panel, or you deciding where
-the contribution is. It is built from the sections the review just wrote, so
-it can never claim something the review does not say, and it reuses the same
-in-text citation markers, so the two documents line up.
+`--output-type summary` produces an executive summary **instead of** the
+review — one run makes one document, not both. Same evidence, organised for
+someone who will not read a full review: a supervisor, a panel, or you
+deciding where the contribution is. Under the hood the sections are still
+drafted first and the summary is written from them, so it can never claim
+something the review would not have said, and it cites with the same in-text
+markers; the sections simply are not written out.
 
 It follows the structure consulting practice uses for an executive summary,
 adapted to literature rather than to a business case:
@@ -683,15 +684,18 @@ adapted to literature rather than to a business case:
 - **The short version** — Situation, Complication, Question, Answer, in four
   sentences. The Answer is the headline: a reader who stops there still
   knows what the literature concludes.
-- **What the evidence shows** — two to five findings that cut *across* the
-  sub-questions rather than restating each section in turn. Each is a
-  headline assertion used as its own heading, so reading only the headings
-  gives the whole argument, and each is tagged **[Evidence]** (sources agree
-  and none contradicts), **[Contested]** (sources disagree) or **[Gap]**
-  (pointed toward but not tested). The consulting version of this tag is
-  Evidence / Assumption / Gap; in a review the interesting middle case is
-  not an untested assumption but a genuine disagreement between published
-  studies.
+- **What the evidence shows** — findings that cut *across* the sub-questions
+  rather than restating each section in turn. Each is a headline assertion
+  used as its own heading, so reading only the headings gives the whole
+  argument, and each is tagged **[Evidence]** (sources agree and none
+  contradicts), **[Contested]** (sources disagree) or **[Gap]** (pointed
+  toward but not tested). The consulting version of this tag is Evidence /
+  Assumption / Gap; in a review the interesting middle case is not an
+  untested assumption but a genuine disagreement between published studies.
+  **Every finding ends with a "So:" sentence** naming what the student
+  should now do differently — a design choice, a scope decision, a claim
+  they can now make or must stop making. A finding without one is not
+  finished.
 - **Where the literature disagrees** — the debate stated as a debate: who
   claims what, and what would settle it. If nothing in your sources conflicts
   anywhere, it says so and treats that as a finding — an evidence base with
@@ -700,15 +704,24 @@ adapted to literature rather than to a business case:
   otherwise miss: a result cutting against the set, a claim resting on one
   source, evidence concentrated in one country or period, a term defined
   inconsistently between papers, a finding that has aged badly.
-- **What this means for the thesis** — concrete next actions, each following
-  from something above it.
+- **What this means for the thesis** — concrete next actions, highest value
+  first, each naming what it would establish and which finding it came from.
+  Anything that would read the same way for a different thesis in a
+  different field is rejected by the prompt.
 
-Length scales with the sources actually cited (500–1,400 words);
-`--exec-summary-words` forces a target, `--exec-summary-output` moves the
-file, and `--no-exec-summary` skips it. If the request to Claude fails, what
-gets written is a labelled skeleton — the same rule the review itself
-follows: a document nobody wrote is never shipped under a title that implies
-somebody did.
+**It is proportional to the evidence, in both directions.** Length scales
+with the sources actually cited (400–2,500 words), and so does *how much is
+said*: four sources buy two to three findings, sixty buy five to seven.
+Length alone is not proportionality — a long summary that still makes three
+points has padded three points — so the number of findings and callouts is
+scaled and stated in the request, not left to the model. `--summary-words`
+forces a length; `-o` moves the file.
+
+If the request to Claude fails, what gets written is a labelled skeleton.
+And if a section underneath it failed to draft, the summary says so in its
+header: the review flags that on the section itself, but a standalone
+summary has no section to flag it on, which would make it the one place a
+reader could never learn that the evidence beneath is thinner than it looks.
 
 > ⚠️ **This is a draft, not a citable final product.** Claims about papers
 > Part 2 indexed locally draw on real extracted text; claims about papers

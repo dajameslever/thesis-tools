@@ -16,7 +16,7 @@ from .library.index_store import LibraryIndex
 from .library.library_indexer import LibraryIndexerInputs, run_library_indexer
 from .library.citation_graph import DEFAULT_MIN_GAP_RELEVANCE
 from .library.visualize import build_literature_matrix, compute_stats, render_html
-from .literature_review import LiteratureReviewInputs, run_literature_review
+from .literature_review import OUTPUT_TYPES, LiteratureReviewInputs, run_literature_review
 from .project import DEFAULT_PROJECT_PATH, ProjectState
 from .sources import ALL_SOURCES
 from .subquestions import generate_subquestions
@@ -312,6 +312,15 @@ def _interactive_literature_review_inputs(project: ProjectState) -> LiteratureRe
 
     style = project.style or _prompt_style()
 
+    print("\nTwo ways to present the same evidence — pick one:")
+    print("  review  — the full draft, one section per sub-question (what you'd build a chapter from)")
+    print("  summary — an executive summary: answer first, themed across the sub-questions,")
+    print("            with the disagreements between sources stated as disagreements")
+    output_type = _prompt("Which do you want?", default="review").strip().lower()
+    if output_type not in OUTPUT_TYPES:
+        print(f"  (not one of {', '.join(OUTPUT_TYPES)} — defaulting to review)")
+        output_type = "review"
+
     sources = []
     if project.last_topic_cache and Path(project.last_topic_cache).is_file():
         sources.append(project.last_topic_cache)
@@ -331,6 +340,7 @@ def _interactive_literature_review_inputs(project: ProjectState) -> LiteratureRe
         sub_questions=sub_questions,
         paper_sources=sources,
         style=style,
+        output_type=output_type,
         llm_model=project.llm_model or llm.DEFAULT_MODEL,
     )
 
@@ -481,7 +491,16 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     lr.set_defaults(use_stance_cache=True)
     lr.add_argument("--min-relevance", type=float, default=0.1, help="Drop papers scoring below this relevance to the research question (0-1, default: 0.1)")
-    lr.add_argument("-o", "--output", dest="output_path", help="Where to write the Markdown draft (default: output/literature-review-<timestamp>.md)")
+    lr.add_argument(
+        "--output-type",
+        choices=OUTPUT_TYPES,
+        default=None,
+        help="Which document to produce. 'review' (default) is the full draft, one section per "
+        "sub-question. 'summary' is an executive summary of the same evidence: answer first, "
+        "themed across the sub-questions rather than one section each, with the disagreements "
+        "stated as disagreements",
+    )
+    lr.add_argument("-o", "--output", dest="output_path", help="Where to write the Markdown (default: output/literature-review-<timestamp>.md, or executive-summary-<timestamp>.md with --output-type summary)")
     lr.add_argument(
         "--words-per-question",
         type=int,
@@ -501,26 +520,12 @@ def _build_parser() -> argparse.ArgumentParser:
     lr.add_argument("--no-html", dest="write_html", action="store_false", help="Write only the Markdown draft, no HTML version")
     lr.set_defaults(write_html=True)
     lr.add_argument(
-        "--exec-summary-output",
-        dest="exec_summary_path",
-        default=None,
-        help="Where to write the executive summary (default: alongside the draft, as <draft>.exec-summary.md)",
-    )
-    lr.add_argument(
-        "--exec-summary-words",
+        "--summary-words",
         type=int,
         default=None,
-        help="Force a target length on the executive summary. By default it scales with the number "
-        "of sources actually cited",
+        help="With --output-type summary: force a target length. By default it scales with the "
+        "number of sources actually cited",
     )
-    lr.add_argument(
-        "--no-exec-summary",
-        dest="write_exec_summary",
-        action="store_false",
-        help="Write only the review, skipping the companion executive summary — the answer-first "
-        "version of the same evidence, organised by theme rather than by sub-question",
-    )
-    lr.set_defaults(write_exec_summary=True)
     lr.add_argument(
         "--no-prompt-cache",
         dest="use_prompt_cache",
@@ -904,9 +909,9 @@ def _run_literature_review_command(args: argparse.Namespace) -> int:
         inputs.words_per_question = args.words_per_question
     inputs.allow_quotes = args.allow_quotes
     inputs.use_prompt_cache = args.use_prompt_cache
-    inputs.write_exec_summary = args.write_exec_summary
-    inputs.exec_summary_path = args.exec_summary_path
-    inputs.exec_summary_words = args.exec_summary_words
+    if args.output_type:
+        inputs.output_type = args.output_type
+    inputs.summary_words = args.summary_words
     inputs.write_html = args.write_html
     inputs.html_output_path = args.html_output_path
 
@@ -926,7 +931,8 @@ def _run_literature_review_command(args: argparse.Namespace) -> int:
     )
     project.save(args.project_file)
 
-    print(f"\nDraft written to {report_path}")
+    label = "Executive summary" if inputs.output_type == "summary" else "Draft"
+    print(f"\n{label} written to {report_path}")
     return 0
 
 

@@ -47,14 +47,40 @@ from .sources.base import Paper
 MAX_SECTION_CHARS = 120_000
 
 # Scales with the evidence behind it, on the same principle as the review's
-# own sections: a summary of four papers that runs to 1,400 words is padding.
+# own sections: a summary of four papers that runs to 1,400 words is padding,
+# and a summary of sixty that runs to 800 has thrown most of the evidence
+# away. The cap is deliberately high enough that a large library is not
+# flattened to the same length as a small one.
 WORDS_PER_SOURCE = 80
-MIN_WORDS = 500
-MAX_WORDS = 1400
+MIN_WORDS = 400
+MAX_WORDS = 2500
 
 
 def target_words_for(source_count: int) -> int:
     return max(MIN_WORDS, min(WORDS_PER_SOURCE * source_count, MAX_WORDS))
+
+
+# Length alone is not proportionality: a summary of forty sources that is
+# long but still makes three points has padded three points. The number of
+# findings and callouts scales too, so more evidence buys more distinct
+# things said rather than more words about the same ones. Each band is
+# (max sources, findings, callouts).
+_STRUCTURE_BANDS = (
+    (4, "two to three", "two"),
+    (10, "three to four", "two to three"),
+    (25, "four to five", "three to four"),
+    (10**9, "five to seven", "four to six"),
+)
+
+
+def structure_for(source_count: int) -> Tuple[str, str]:
+    """How many findings and callouts this much evidence supports, as words
+    rather than digits — the count goes into the instruction, and a model
+    follows "four to five" more reliably than "4-5"."""
+    for ceiling, findings, callouts in _STRUCTURE_BANDS:
+        if source_count <= ceiling:
+            return findings, callouts
+    return _STRUCTURE_BANDS[-1][1:]
 
 
 _SYSTEM_PROMPT = (
@@ -73,15 +99,21 @@ _SYSTEM_PROMPT = (
     "stops here must still know what the literature concludes.\n"
     "\n"
     "## What the evidence shows\n"
-    "Between two and five findings that cut ACROSS the sub-questions — themes, not a restatement of "
-    "each section in turn. Two papers reaching the same conclusion by different routes is a theme; "
-    "'Section 3 discussed X' is not. Each finding is a `### ` heading that states the finding as a "
-    "complete assertion, so that reading only the headings gives the whole argument. End each "
-    "heading with one tag in square brackets:\n"
+    "Findings that cut ACROSS the sub-questions — themes, not a restatement of each section in "
+    "turn. Two papers reaching the same conclusion by different routes is a theme; 'Section 3 "
+    "discussed X' is not. How many to write is stated with the sub-questions at the end of the "
+    "message; write that many distinct findings rather than padding fewer ones out to length. Each "
+    "finding is a `### ` heading that states the finding as a complete assertion, so that reading "
+    "only the headings gives the whole argument. End each heading with one tag in square "
+    "brackets:\n"
     "  [Evidence] — several sources agree and none in the set contradicts it.\n"
     "  [Contested] — sources in the set disagree; say so in the heading itself.\n"
     "  [Gap] — the sources point toward it but none tests it directly.\n"
-    "Under each heading, one short paragraph of support, citing the specific papers.\n"
+    "Under each heading write one short paragraph: what the sources show and which sources show "
+    "it, then a final sentence beginning 'So:' that states what this finding means the student "
+    "should now do differently — a design choice, a scope decision, a claim they can now make or "
+    "must now stop making. A finding with no 'So:' sentence is not finished. The implication must "
+    "follow from the finding above it; do not reach for generic advice.\n"
     "\n"
     "## Where the literature disagrees\n"
     "The debate, stated as a debate. For each disagreement: what one side claims and who claims it, "
@@ -92,7 +124,8 @@ _SYSTEM_PROMPT = (
     "told which you think it is.\n"
     "\n"
     "## Worth calling out\n"
-    "Two to five things a careful reader would want flagged and would otherwise miss. Real "
+    "Things a careful reader would want flagged and would otherwise miss — how many is stated at "
+    "the end of the message. Real "
     "candidates: a result that cuts against the rest of the set; an unusually strong or unusually "
     "weak study design carrying more weight than it should; a claim that rests on a single source; "
     "a concentration of the evidence in one country, sector, period or population; a definition "
@@ -100,10 +133,12 @@ _SYSTEM_PROMPT = (
     "not pad this section to reach a count — three sharp callouts beat five obvious ones.\n"
     "\n"
     "## What this means for the thesis\n"
-    "Three to six concrete next actions, each one line, verb first: the search to run, the gap to "
-    "target, the disagreement to adjudicate, the method that would settle something. Each says what "
-    "it would establish. No generic advice ('read more widely') — every action must follow from "
-    "something above it.\n"
+    "Three to six concrete next actions, ordered with the highest-value first, each a single line, "
+    "verb first: the search to run, the gap to target, the disagreement to adjudicate, the method "
+    "that would settle something. Each names what it would establish, and points back to the "
+    "finding or callout it comes from. Reject any action that would read the same way for a "
+    "different thesis in a different field ('read more widely', 'consider methodology') — if it "
+    "does not name something specific to this evidence base, it does not belong here.\n"
     "\n"
     "Rules:\n"
     "- CITE EVERY CLAIM using the exact in-text citation markers as they already appear in the "
@@ -112,6 +147,9 @@ _SYSTEM_PROMPT = (
     "- Paraphrase. Do not quote the sections back; this is a summary, not an extract.\n"
     "- No hedging as a substitute for a position. Where the evidence supports a claim, state it; "
     "where it does not, say what is missing. 'More research is needed' on its own is not a finding.\n"
+    "- Every section earns its place by changing what the reader would do. A section that only "
+    "describes what the literature contains, without saying what follows from it, has not been "
+    "written yet.\n"
     "- No bullet-point dumps of paper titles anywhere.\n"
     "\n" + llm.ACADEMIC_STYLE_NOTE
 )
@@ -222,8 +260,12 @@ def build_exec_summary(
         # breakpoint; the instruction, which carries the varying word target,
         # goes after it. Same reasoning as the synthesis call.
         user_message = "\n\n".join(context) + "\n\nDrafted sections:\n\n" + "\n\n".join(blocks)
+        findings, callouts = structure_for(len(cited_papers))
         instruction = (
-            f"Write the executive summary of the review above, aiming for about {target} words."
+            f"Write the executive summary of the review above, aiming for about {target} words. "
+            f"This evidence base supports {findings} findings under 'What the evidence shows' and "
+            f"{callouts} entries under 'Worth calling out' — write that many, each a distinct "
+            "point, rather than padding fewer ones out to the word count."
         )
         errors: List[str] = []
         result = llm.ask(

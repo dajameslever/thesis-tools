@@ -71,6 +71,11 @@ def target_words_for(source_count: int) -> int:
 # says when trimming happened rather than hiding it.
 MAX_PROMPT_TEXT_CHARS = 300_000
 
+# The two deliverables this command can produce. One run makes one of them:
+# they are two presentations of the same evidence, and writing both by
+# default just leaves the reader deciding which to open.
+OUTPUT_TYPES = ("review", "summary")
+
 
 
 @dataclass
@@ -105,19 +110,22 @@ class LiteratureReviewInputs:
     # back at a tenth of the price; --no-prompt-cache turns it off for a
     # one-shot run, where the 1.25x write is never recouped.
     use_prompt_cache: bool = True
+    # Which deliverable this run produces — one, not both:
+    #   "review"  — the full draft, one section per sub-question.
+    #   "summary" — the executive summary: the same evidence, answer first,
+    #               themed across the sub-questions rather than one section
+    #               each, with the disagreements stated as disagreements.
+    # Both are written from the same drafted sections, so choosing "summary"
+    # costs the same work; only the sections themselves are not written out.
+    output_type: str = "review"
     output_path: Optional[str] = None
-    # Written alongside the Markdown draft unless disabled — same content,
-    # styled for reading in a browser rather than in a text editor.
+    # Written alongside the Markdown unless disabled — same content, styled
+    # for reading in a browser rather than in a text editor.
     html_output_path: Optional[str] = None
     write_html: bool = True
-    # The companion executive summary: the same evidence organised for a
-    # reader who will not read the review — answer first, themes across the
-    # sub-questions rather than one section each, disagreements stated as
-    # disagreements. Written as .md and .html beside the draft.
-    write_exec_summary: bool = True
-    exec_summary_path: Optional[str] = None
-    # None scales it to the number of sources cited; a number forces it.
-    exec_summary_words: Optional[int] = None
+    # Executive summary only: None scales it to the number of sources cited,
+    # a number forces it.
+    summary_words: Optional[int] = None
 
 
 def _load_papers_from_source(path: str) -> List[Paper]:
@@ -567,6 +575,10 @@ def run_literature_review(inputs: LiteratureReviewInputs) -> str:
     """Run the full pipeline and return the path to the written draft."""
     if inputs.style.lower() not in STYLES:
         raise ValueError(f"Unknown citation style '{inputs.style}'. Choose from: {', '.join(STYLES)}")
+    if inputs.output_type not in OUTPUT_TYPES:
+        raise ValueError(
+            f"Unknown output type '{inputs.output_type}'. Choose from: {', '.join(OUTPUT_TYPES)}"
+        )
     if not inputs.sub_questions:
         raise ValueError("No sub-questions to draft around. Run topic-finder first, or pass --sub-questions.")
 
@@ -753,24 +765,12 @@ def run_literature_review(inputs: LiteratureReviewInputs) -> str:
         )
     lines[drafting_mode_index] = f"- **Drafting mode:** {mode}"
 
-    report_text = "\n".join(lines)
-
-    output_path = Path(inputs.output_path) if inputs.output_path else _default_output_path()
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(report_text, encoding="utf-8")
-
-    if inputs.write_html:
-        # Rendered from the same Markdown that was just written, so the two
-        # can never drift apart.
-        html_path = Path(inputs.html_output_path) if inputs.html_output_path else output_path.with_suffix(".html")
-        html_path.parent.mkdir(parents=True, exist_ok=True)
-        html_path.write_text(render_review_html(report_text), encoding="utf-8")
-        print(f"HTML version: {html_path}", file=sys.stderr)
-
-    if inputs.write_exec_summary:
-        # Built from the drafted sections, so the summary can never claim
-        # something the review itself does not say — and using the same
-        # citation markers, so the two documents cite identically.
+    if inputs.output_type == "summary":
+        # Built from the sections drafted above rather than from the papers
+        # again, so the summary can never claim something the review would
+        # not have said — and using the same citation markers, so a claim can
+        # still be traced back to its source. The sections themselves are
+        # simply not written out: this run produces one deliverable.
         markers_by_key = {
             key: _citation_marker_for(paper, inputs.style, ref_number_by_key)
             for key, paper in cited_papers_by_key.items()
@@ -787,40 +787,54 @@ def run_literature_review(inputs: LiteratureReviewInputs) -> str:
             client=client,
             model=inputs.llm_model,
             relevant_paper_count=len(relevant),
-            words=inputs.exec_summary_words,
+            words=inputs.summary_words,
             cache=inputs.use_prompt_cache,
             usage_totals=usage_totals,
         )
         header = [
             f"# Executive Summary — {inputs.working_title}",
             "",
-            f"_Companion to `{output_path.name}`. Same evidence, organised for a reader who will not "
-            "read the full review._",
+            f"_{_evidence_line(len(relevant), len(cited_papers_by_key), len(inputs.sub_questions))}_",
             "",
         ]
+        if degraded:
+            # The summary is written from the sections, so a section that
+            # fell back to a bullet outline is upstream of everything below.
+            # The review says so on the section itself; here there is no
+            # section to say it on, which makes the header the only place a
+            # reader could ever learn it.
+            header += [
+                f"> ⚠️ **Written from a partly failed review.** {len(degraded)} of "
+                f"{len(inputs.sub_questions)} section(s) could not be drafted "
+                f"({degraded[0][1]}), so the evidence beneath this summary is thinner than it "
+                "looks. Re-run to try again.",
+                "",
+            ]
         if summary_failure:
             header += [
                 f"> ⚠️ **This is a skeleton, not a written summary.** The request to Claude failed "
-                f"({summary_failure}), so what follows lists what the review found without "
+                f"({summary_failure}), so what follows lists what the sources say without "
                 "interpreting it. Re-run to try again.",
                 "",
             ]
-        summary_text = "\n".join(header) + "\n" + summary_md.rstrip() + "\n"
+        header += [DISCLAIMER, ""]
+        report_text = "\n".join(header) + "\n" + summary_md.rstrip() + "\n"
+        html_title = "Executive Summary"
+    else:
+        report_text = "\n".join(lines)
+        html_title = "Literature Review — Draft"
 
-        summary_path = (
-            Path(inputs.exec_summary_path)
-            if inputs.exec_summary_path
-            else output_path.with_suffix(".exec-summary.md")
-        )
-        summary_path.parent.mkdir(parents=True, exist_ok=True)
-        summary_path.write_text(summary_text, encoding="utf-8")
-        print(f"Executive summary: {summary_path}", file=sys.stderr)
-        if inputs.write_html:
-            summary_html_path = summary_path.with_suffix(".html")
-            summary_html_path.write_text(
-                render_review_html(summary_text, title="Executive Summary"), encoding="utf-8"
-            )
-            print(f"Executive summary (HTML): {summary_html_path}", file=sys.stderr)
+    output_path = Path(inputs.output_path) if inputs.output_path else _default_output_path(inputs.output_type)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(report_text, encoding="utf-8")
+
+    if inputs.write_html:
+        # Rendered from the same Markdown that was just written, so the two
+        # can never drift apart.
+        html_path = Path(inputs.html_output_path) if inputs.html_output_path else output_path.with_suffix(".html")
+        html_path.parent.mkdir(parents=True, exist_ok=True)
+        html_path.write_text(render_review_html(report_text, title=html_title), encoding="utf-8")
+        print(f"HTML version: {html_path}", file=sys.stderr)
 
     usage_line = llm.format_usage(usage_totals)
     if usage_line:
@@ -835,6 +849,19 @@ def run_literature_review(inputs: LiteratureReviewInputs) -> str:
     return str(output_path)
 
 
-def _default_output_path() -> Path:
+def _evidence_line(relevant: int, cited: int, sub_questions: int) -> str:
+    """What a standalone summary has to say about its own basis. The
+    companion version could point at the review sitting next to it; on its
+    own, the reader needs to know how much evidence is behind this and that
+    a full review was drafted underneath it."""
+    return (
+        f"Drafted from {cited} source(s) cited across {relevant} judged relevant, over "
+        f"{sub_questions} sub-question(s). Every claim below was written from a full review "
+        "section that is not printed here."
+    )
+
+
+def _default_output_path(output_type: str = "review") -> Path:
     timestamp = _dt.datetime.now().strftime("%Y%m%d-%H%M%S")
-    return Path("output") / f"literature-review-{timestamp}.md"
+    stem = "executive-summary" if output_type == "summary" else "literature-review"
+    return Path("output") / f"{stem}-{timestamp}.md"

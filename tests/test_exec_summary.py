@@ -41,7 +41,24 @@ def test_target_length_scales_with_the_sources_cited():
 
     assert target_words_for(1) == MIN_WORDS
     assert target_words_for(100) == MAX_WORDS
-    assert target_words_for(4) < target_words_for(12)
+    assert target_words_for(4) < target_words_for(12) < target_words_for(30)
+    # A large library must not be flattened to the same length as a small one.
+    assert target_words_for(40) > 2 * target_words_for(4)
+
+
+def test_how_much_is_said_scales_too_not_just_how_long_it_is():
+    """Length alone is not proportionality: a long summary that still makes
+    three points has padded three points."""
+    from thesis_tools.exec_summary import structure_for
+
+    small_findings, small_callouts = structure_for(3)
+    large_findings, large_callouts = structure_for(60)
+
+    assert small_findings == "two to three" and large_findings == "five to seven"
+    assert small_callouts != large_callouts
+    # Monotonic across the bands, with no gaps or overlaps in coverage.
+    seen = [structure_for(n)[0] for n in (1, 4, 5, 10, 11, 25, 26, 1000)]
+    assert seen == sorted(seen, key=lambda v: ["two to three", "three to four", "four to five", "five to seven"].index(v))
 
 
 @patch("thesis_tools.llm.ask")
@@ -189,3 +206,37 @@ def test_the_written_summary_is_spaced_before_it_is_returned(mock_ask):
     mock_ask.return_value = "## The short version\n\n**Situation:** A.\n**Complication:** B.\n**Answer:** C."
     text, _ = build_exec_summary(**_kwargs())
     assert "A.\n\n**Complication:**" in text
+
+
+@patch("thesis_tools.llm.ask")
+def test_the_instruction_scales_the_number_of_points_to_the_evidence(mock_ask):
+    """More evidence should buy more distinct things said, not more words
+    about the same ones."""
+    mock_ask.return_value = "## The short version"
+    papers = [_paper(f"Author{i}", 2020 + i % 5, f"10.1/{i}", f"Paper {i}") for i in range(40)]
+    build_exec_summary(**_kwargs(cited_papers=papers, markers_by_key={p.key(): "" for p in papers}))
+
+    suffix = mock_ask.call_args.kwargs["cache_suffix"]
+    assert "five to seven findings" in suffix
+    assert "2500 words" in suffix
+
+
+@patch("thesis_tools.llm.ask")
+def test_a_small_evidence_base_is_told_to_stay_small(mock_ask):
+    mock_ask.return_value = "## The short version"
+    build_exec_summary(**_kwargs())  # two cited papers
+
+    suffix = mock_ask.call_args.kwargs["cache_suffix"]
+    assert "two to three findings" in suffix
+    assert "400 words" in suffix
+
+
+def test_every_finding_is_required_to_state_what_follows_from_it():
+    """McKinsey-style means actionable: a section that describes what the
+    literature contains without saying what to do differently is not done."""
+    from thesis_tools.exec_summary import _SYSTEM_PROMPT
+
+    assert "So:" in _SYSTEM_PROMPT
+    assert "not finished" in _SYSTEM_PROMPT
+    assert "changing what the reader would do" in _SYSTEM_PROMPT
+    assert "read more widely" in _SYSTEM_PROMPT  # named as the thing to reject
