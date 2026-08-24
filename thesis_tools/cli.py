@@ -500,6 +500,16 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     lr.add_argument("--no-html", dest="write_html", action="store_false", help="Write only the Markdown draft, no HTML version")
     lr.set_defaults(write_html=True)
+    lr.add_argument(
+        "--no-prompt-cache",
+        dest="use_prompt_cache",
+        action="store_false",
+        help="Don't ask Claude to cache the drafting prompts. Caching is on by default because a "
+        "section's prompt carries whole papers, and re-running the draft within five minutes reads "
+        "them back at a tenth of the price; turn it off for a genuinely one-shot run, where the "
+        "1.25x cost of writing the cache is never recouped",
+    )
+    lr.set_defaults(use_prompt_cache=True)
     lr.add_argument("--project-file", default=DEFAULT_PROJECT_PATH, help=f"Where shared project state lives (default: {DEFAULT_PROJECT_PATH})")
     lr.add_argument("--non-interactive", action="store_true", help="Don't prompt for missing values; fail instead if --field/--title (and sub-questions) can't be resolved")
 
@@ -872,6 +882,7 @@ def _run_literature_review_command(args: argparse.Namespace) -> int:
     if args.words_per_question is not None:
         inputs.words_per_question = args.words_per_question
     inputs.allow_quotes = args.allow_quotes
+    inputs.use_prompt_cache = args.use_prompt_cache
     inputs.write_html = args.write_html
     inputs.html_output_path = args.html_output_path
 

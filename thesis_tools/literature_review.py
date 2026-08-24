@@ -99,6 +99,11 @@ class LiteratureReviewInputs:
     # were understood, which paraphrase demonstrates and quotation does not.
     # The same dissertation quotes 27 words in ~2,900 — under 1%.
     allow_quotes: bool = False
+    # Prompt caching on the synthesis calls. Worth it because those prompts
+    # carry entire papers and a re-run within the five-minute TTL reads them
+    # back at a tenth of the price; --no-prompt-cache turns it off for a
+    # one-shot run, where the 1.25x write is never recouped.
+    use_prompt_cache: bool = True
     output_path: Optional[str] = None
     # Written alongside the Markdown draft unless disabled — same content,
     # styled for reading in a browser rather than in a text editor.
@@ -140,7 +145,9 @@ _INTRO_SYSTEM_PROMPT = (
 )
 
 
-def _draft_intro(inputs: LiteratureReviewInputs, num_papers: int, client) -> str:
+def _draft_intro(
+    inputs: LiteratureReviewInputs, num_papers: int, client, usage_totals: Optional[Dict[str, int]] = None
+) -> str:
     if client is not None:
         user_message = (
             f"Field: {inputs.field}\n"
@@ -148,7 +155,15 @@ def _draft_intro(inputs: LiteratureReviewInputs, num_papers: int, client) -> str
             f"Research question: {inputs.research_question or 'n/a'}\n"
             f"Number of sub-questions this review covers: {len(inputs.sub_questions)}"
         )
-        result = llm.ask(client, _INTRO_SYSTEM_PROMPT, user_message, model=inputs.llm_model, max_tokens=200)
+        # Not cached: four lines of prompt, nowhere near a cacheable prefix.
+        result = llm.ask(
+            client,
+            _INTRO_SYSTEM_PROMPT,
+            user_message,
+            model=inputs.llm_model,
+            max_tokens=200,
+            usage_totals=usage_totals,
+        )
         if result:
             return result
 
@@ -200,8 +215,9 @@ def _fit_paper_texts(texts: List[str], budget: int = MAX_PROMPT_TEXT_CHARS) -> T
 # review is expected to critically evaluate competing evidence, not just
 # report that it exists.
 _SYNTHESIS_SYSTEM_PROMPT_TEMPLATE = (
-    "You write ONE SECTION of a literature review — about {words} words — addressing the given "
-    "sub-question, using ONLY the material provided below for each paper.\n"
+    "You write ONE SECTION of a literature review, addressing the sub-question given at the end "
+    "of the message, using ONLY the material provided for each paper. A target length is given "
+    "with the sub-question.\n"
     "- CONDENSE. Your job is to show that the literature has been read and understood, not to "
     "reproduce it. Reduce each paper to its core question and its essential finding — what it set "
     "out to establish, what it actually shows, and what that means for this sub-question — and "
@@ -265,9 +281,13 @@ _QUOTING_ALLOWED_RULES = (
 )
 
 
-def _synthesis_system_prompt(words: int, allow_quotes: bool = False) -> str:
+def _synthesis_system_prompt(allow_quotes: bool = False) -> str:
+    """The system prompt for a synthesis call. Deliberately free of anything
+    that varies between sections (the target word count used to be
+    interpolated in here) — it is the same bytes for every call in a run, and
+    for the same call across re-runs, which is what makes the prompt cacheable
+    at all."""
     return _SYNTHESIS_SYSTEM_PROMPT_TEMPLATE.format(
-        words=words,
         quoting=_QUOTING_ALLOWED_RULES if allow_quotes else _PARAPHRASE_ONLY_RULES,
     )
 
@@ -390,6 +410,7 @@ def _draft_synthesis_section(
     inputs: LiteratureReviewInputs,
     client,
     ref_number_by_key: Dict[str, int],
+    usage_totals: Optional[Dict[str, int]] = None,
 ) -> Tuple[str, List[Paper], Optional[str]]:
     """Returns (section text, papers cited, failure reason).
 
@@ -424,18 +445,34 @@ def _draft_synthesis_section(
             )
             for (label, p), text in zip(labeled, fitted)
         ]
-        user_message = f"Sub-question: {question}\n\nPapers:\n" + "\n".join(blocks)
+        # Papers first, the instruction last. Two reasons: the papers are the
+        # bulk of the prompt and the only part worth caching, so they have to
+        # sit in front of the cache breakpoint; and with tens of thousands of
+        # tokens of source material, the task reads better stated after the
+        # material than before it.
+        user_message = "Papers:\n" + "\n".join(blocks)
         # Generous headroom over the target: a word count is a target, not a
         # cap, and running long beats being cut off mid-sentence.
         errors: List[str] = []
         target_words = inputs.words_per_question or target_words_for(len(labeled))
+        instruction = (
+            f"Sub-question: {question}\n\n"
+            f"Write the section addressing this sub-question from the papers above, "
+            f"aiming for about {target_words} words."
+        )
         result = llm.ask(
             client,
-            _synthesis_system_prompt(target_words, inputs.allow_quotes),
+            _synthesis_system_prompt(inputs.allow_quotes),
             user_message,
             model=inputs.llm_model,
             max_tokens=max(int(target_words * 2.5), 1500),
             errors=errors,
+            # The one call in the toolkit big enough for caching to pay: the
+            # prompt carries whole papers, and re-running a draft after
+            # changing a knob is the normal way this gets used.
+            cache=inputs.use_prompt_cache,
+            cache_suffix=instruction,
+            usage_totals=usage_totals,
         )
         if result:
             if trimmed:
@@ -471,7 +508,13 @@ _CONCLUSION_SYSTEM_PROMPT = (
 )
 
 
-def _draft_conclusion_section(analysis: SubquestionAnalysis, no_coverage: List[str], inputs: LiteratureReviewInputs, client) -> str:
+def _draft_conclusion_section(
+    analysis: SubquestionAnalysis,
+    no_coverage: List[str],
+    inputs: LiteratureReviewInputs,
+    client,
+    usage_totals: Optional[Dict[str, int]] = None,
+) -> str:
     tensions = analysis.tensions()
     if not tensions and not no_coverage:
         return "No major tensions or coverage gaps were identified among the sub-questions checked."
@@ -483,8 +526,18 @@ def _draft_conclusion_section(analysis: SubquestionAnalysis, no_coverage: List[s
         if no_coverage:
             parts.append("Sub-questions with no supporting literature found at all:\n" + "\n".join(f"- {q}" for q in no_coverage))
         # Same headroom reasoning as the synthesis call above — 120-200 words
-        # requested, generous budget so truncation is rare.
-        result = llm.ask(client, _CONCLUSION_SYSTEM_PROMPT, "\n\n".join(parts), model=inputs.llm_model, max_tokens=500)
+        # requested, generous budget so truncation is rare. Not cached: this
+        # prompt is a few hundred tokens of sub-question lists, far below any
+        # model's minimum cacheable prefix, so a breakpoint here would write
+        # nothing and read nothing.
+        result = llm.ask(
+            client,
+            _CONCLUSION_SYSTEM_PROMPT,
+            "\n\n".join(parts),
+            model=inputs.llm_model,
+            max_tokens=500,
+            usage_totals=usage_totals,
+        )
         if result:
             return result
 
@@ -608,6 +661,11 @@ def run_literature_review(inputs: LiteratureReviewInputs) -> str:
     lines.append(_draft_intro(inputs, len(relevant), client))
     lines.append("")
 
+    # Token counters, accumulated across every drafting call so the run can
+    # report at the end whether the cache was actually read back. A cache
+    # that only ever writes is overhead, and the counters are the only way
+    # to tell.
+    usage_totals: Dict[str, int] = {}
     cited_papers_by_key: Dict[str, Paper] = {}
     no_coverage: List[str] = []
     degraded: List[Tuple[str, str]] = []
@@ -620,7 +678,9 @@ def run_literature_review(inputs: LiteratureReviewInputs) -> str:
         grouped = analysis.grouped_papers(question, relevant)
         lines.append(f"## {i}. {question}")
         lines.append("")
-        section, cited, failure = _draft_synthesis_section(question, grouped, inputs, client, ref_number_by_key)
+        section, cited, failure = _draft_synthesis_section(
+            question, grouped, inputs, client, ref_number_by_key, usage_totals
+        )
         if failure:
             degraded.append((question, failure))
             lines.append(
@@ -638,7 +698,7 @@ def run_literature_review(inputs: LiteratureReviewInputs) -> str:
 
     lines.append("## Conclusion and Areas for Further Research")
     lines.append("")
-    lines.append(_draft_conclusion_section(analysis, no_coverage, inputs, client))
+    lines.append(_draft_conclusion_section(analysis, no_coverage, inputs, client, usage_totals))
     lines.append("")
 
     lines.append("## References")
@@ -691,6 +751,16 @@ def run_literature_review(inputs: LiteratureReviewInputs) -> str:
         html_path.parent.mkdir(parents=True, exist_ok=True)
         html_path.write_text(render_review_html(report_text), encoding="utf-8")
         print(f"HTML version: {html_path}", file=sys.stderr)
+
+    usage_line = llm.format_usage(usage_totals)
+    if usage_line:
+        print(f"Drafting used {usage_line}.", file=sys.stderr)
+        if inputs.use_prompt_cache and not usage_totals.get("cache_read_input_tokens"):
+            print(
+                "  (nothing was read from the prompt cache — expected on a first run; "
+                "a re-run within five minutes should read most of it back)",
+                file=sys.stderr,
+            )
 
     return str(output_path)
 

@@ -48,7 +48,7 @@ def test_academic_style_note_is_embedded_in_content_prompts():
         _synthesis_system_prompt,
     )
 
-    for prompt in (_LLM_SYSTEM_PROMPT, _INTRO_SYSTEM_PROMPT, _synthesis_system_prompt(1200), _CONCLUSION_SYSTEM_PROMPT):
+    for prompt in (_LLM_SYSTEM_PROMPT, _INTRO_SYSTEM_PROMPT, _synthesis_system_prompt(), _CONCLUSION_SYSTEM_PROMPT):
         assert llm.ACADEMIC_STYLE_NOTE in prompt
 
 
@@ -188,3 +188,87 @@ def test_ask_reports_an_empty_response_as_a_failure():
 
     assert llm.ask(client, "sys", "user", errors=errors) is None
     assert "empty response" in errors[0]
+
+
+def _text_client(text="ok"):
+    client = MagicMock()
+    block = MagicMock()
+    block.type = "text"
+    block.text = text
+    response = MagicMock()
+    response.content = [block]
+    response.stop_reason = "end_turn"
+    response.usage.input_tokens = 100
+    response.usage.output_tokens = 20
+    response.usage.cache_creation_input_tokens = 0
+    response.usage.cache_read_input_tokens = 0
+    client.messages.create.return_value = response
+    return client, response
+
+
+def test_ask_sends_no_cache_control_by_default():
+    """Caching a prompt costs 1.25x to write and only pays back on a read —
+    it has to be asked for, never assumed."""
+    client, _ = _text_client()
+    llm.ask(client, "sys", "user")
+    assert "cache_control" not in client.messages.create.call_args.kwargs
+
+
+def test_ask_caches_the_whole_prompt_when_asked():
+    client, _ = _text_client()
+    llm.ask(client, "sys", "user", cache=True)
+    assert client.messages.create.call_args.kwargs["cache_control"] == {"type": "ephemeral"}
+
+
+def test_cache_suffix_is_sent_after_the_breakpoint():
+    """The point of the suffix: the varying tail (a word target, a tweaked
+    instruction) must sit OUTSIDE the cached prefix, or it invalidates the
+    entry every time it changes."""
+    client, _ = _text_client()
+    llm.ask(client, "sys", "the papers", cache=True, cache_suffix="write 900 words")
+
+    content = client.messages.create.call_args.kwargs["messages"][0]["content"]
+    assert [b["text"] for b in content] == ["the papers", "write 900 words"]
+    assert content[0]["cache_control"] == {"type": "ephemeral"}
+    assert "cache_control" not in content[1]
+    # A block-level breakpoint replaces the top-level one, never doubles it.
+    assert "cache_control" not in client.messages.create.call_args.kwargs
+
+
+def test_cache_suffix_is_appended_inline_when_caching_is_off():
+    client, _ = _text_client()
+    llm.ask(client, "sys", "the papers", cache=False, cache_suffix="write 900 words")
+
+    content = client.messages.create.call_args.kwargs["messages"][0]["content"]
+    assert content == "the papers\n\nwrite 900 words"
+
+
+def test_usage_totals_accumulate_across_calls():
+    """A cache that only ever writes is pure overhead; the counters are the
+    only way to tell that apart from one that is being read back."""
+    client, response = _text_client()
+    response.usage.cache_creation_input_tokens = 5000
+    totals = {}
+
+    llm.ask(client, "sys", "user", usage_totals=totals)
+    response.usage.cache_creation_input_tokens = 0
+    response.usage.cache_read_input_tokens = 5000
+    llm.ask(client, "sys", "user", usage_totals=totals)
+
+    assert totals["input_tokens"] == 200
+    assert totals["output_tokens"] == 40
+    assert totals["cache_creation_input_tokens"] == 5000
+    assert totals["cache_read_input_tokens"] == 5000
+
+
+def test_format_usage_is_none_when_nothing_was_sent():
+    assert llm.format_usage({}) is None
+    assert llm.format_usage({"input_tokens": 0, "output_tokens": 0}) is None
+
+
+def test_format_usage_reports_cache_reads():
+    line = llm.format_usage(
+        {"input_tokens": 1000, "output_tokens": 200, "cache_creation_input_tokens": 0,
+         "cache_read_input_tokens": 40000}
+    )
+    assert "40,000 cache-read" in line

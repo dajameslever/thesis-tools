@@ -310,7 +310,7 @@ def test_synthesis_caps_papers_per_call(mock_ask, mock_get_client, tmp_path, mon
     # Only one call per sub-question (plus intro/gaps), and the reference
     # list should be capped, not one entry per paper found.
     call_args = mock_ask.call_args_list
-    synthesis_calls = [c for c in call_args if "Sub-question:" in c.args[2]]
+    synthesis_calls = [c for c in call_args if "You write ONE SECTION of a literature review" in c.args[1]]
     assert len(synthesis_calls) == 1
     papers_in_prompt = synthesis_calls[0].args[2].count("- Author")
     assert papers_in_prompt <= MAX_PAPERS_PER_SYNTHESIS_CALL
@@ -351,7 +351,7 @@ def test_synthesis_prompt_uses_configured_style_citation_marker(mock_ask, mock_g
     run_literature_review(inputs)
 
     call_args = mock_ask.call_args_list
-    synthesis_calls = [c for c in call_args if "Sub-question:" in c.args[2]]
+    synthesis_calls = [c for c in call_args if "You write ONE SECTION of a literature review" in c.args[1]]
     assert len(synthesis_calls) == 1
     prompt = synthesis_calls[0].args[2]
     assert "Cite this paper in-text using exactly: (Doe)." in prompt
@@ -751,7 +751,7 @@ def test_failed_section_is_flagged_in_the_section_and_the_header(mock_ask, mock_
     became a bullet dump, and the header still said "Claude-written prose"."""
     mock_get_client.return_value = object()
 
-    def _ask(client, system, user, model=None, max_tokens=300, errors=None):
+    def _ask(client, system, user, model=None, max_tokens=300, errors=None, **kwargs):
         if _SYNTHESIS_MARKER in system:
             if errors is not None:
                 errors.append("BadRequestError: prompt is too long")
@@ -774,7 +774,7 @@ def test_failed_section_is_flagged_in_the_section_and_the_header(mock_ask, mock_
 @patch("thesis_tools.llm.ask")
 def test_successful_sections_report_the_target_length(mock_ask, mock_get_client, tmp_path):
     mock_get_client.return_value = object()
-    mock_ask.side_effect = lambda c, system, u, model=None, max_tokens=300, errors=None: (
+    mock_ask.side_effect = lambda c, system, u, model=None, max_tokens=300, errors=None, **kwargs: (
         "1: supports - confirms it." if _STANCE_MARKER in system else "A written section."
     )
     run_literature_review(_review_inputs(tmp_path, _two_sided_source(tmp_path), words_per_question=1500))
@@ -789,13 +789,13 @@ def test_successful_sections_report_the_target_length(mock_ask, mock_get_client,
 @patch("thesis_tools.llm.ask")
 def test_explicit_words_per_question_overrides_the_scaling(mock_ask, mock_get_client, tmp_path):
     mock_get_client.return_value = object()
-    mock_ask.side_effect = lambda c, system, u, model=None, max_tokens=300, errors=None: (
+    mock_ask.side_effect = lambda c, system, u, model=None, max_tokens=300, errors=None, **kwargs: (
         "1: supports - confirms it." if _STANCE_MARKER in system else "A written section."
     )
     run_literature_review(_review_inputs(tmp_path, _two_sided_source(tmp_path), words_per_question=1600))
 
     call = _calls_matching(mock_ask, _SYNTHESIS_MARKER)[0]
-    assert "about 1600 words" in call.args[1]
+    assert "about 1600 words" in call.kwargs["cache_suffix"]
     assert call.kwargs["max_tokens"] == 4000  # 1600 * 2.5, room to run long
     assert "targeting ~1600 words" in (tmp_path / "review.md").read_text()
 
@@ -808,13 +808,13 @@ def test_section_length_scales_to_the_evidence_behind_the_question(mock_ask, moc
     from thesis_tools.literature_review import target_words_for
 
     mock_get_client.return_value = object()
-    mock_ask.side_effect = lambda c, system, u, model=None, max_tokens=300, errors=None: (
+    mock_ask.side_effect = lambda c, system, u, model=None, max_tokens=300, errors=None, **kwargs: (
         "1: supports - confirms it." if _STANCE_MARKER in system else "A written section."
     )
     run_literature_review(_review_inputs(tmp_path, _two_sided_source(tmp_path)))
 
     call = _calls_matching(mock_ask, _SYNTHESIS_MARKER)[0]
-    assert f"about {target_words_for(2)} words" in call.args[1]
+    assert f"about {target_words_for(2)} words" in call.kwargs["cache_suffix"]
     assert "scaled to its evidence" in (tmp_path / "review.md").read_text()
 
 
@@ -847,7 +847,7 @@ def test_enough_sources_are_available_to_reach_the_upper_range():
 @patch("thesis_tools.llm.ask")
 def test_sections_paraphrase_rather_than_quote_by_default(mock_ask, mock_get_client, tmp_path):
     mock_get_client.return_value = object()
-    mock_ask.side_effect = lambda c, system, u, model=None, max_tokens=300, errors=None: (
+    mock_ask.side_effect = lambda c, system, u, model=None, max_tokens=300, errors=None, **kwargs: (
         "1: supports - confirms it." if _STANCE_MARKER in system else "A written section."
     )
     run_literature_review(_review_inputs(tmp_path, _two_sided_source(tmp_path)))
@@ -862,7 +862,7 @@ def test_sections_paraphrase_rather_than_quote_by_default(mock_ask, mock_get_cli
 @patch("thesis_tools.llm.ask")
 def test_allow_quotes_restores_the_verbatim_quoting_rules(mock_ask, mock_get_client, tmp_path):
     mock_get_client.return_value = object()
-    mock_ask.side_effect = lambda c, system, u, model=None, max_tokens=300, errors=None: (
+    mock_ask.side_effect = lambda c, system, u, model=None, max_tokens=300, errors=None, **kwargs: (
         "1: supports - confirms it." if _STANCE_MARKER in system else "A written section."
     )
     run_literature_review(_review_inputs(tmp_path, _two_sided_source(tmp_path), allow_quotes=True))
@@ -878,7 +878,7 @@ def test_allow_quotes_restores_the_verbatim_quoting_rules(mock_ask, mock_get_cli
 @patch("thesis_tools.llm.ask")
 def test_paper_blocks_ask_for_understanding_not_quotation_by_default(mock_ask, mock_get_client, tmp_path):
     mock_get_client.return_value = object()
-    mock_ask.side_effect = lambda c, system, u, model=None, max_tokens=300, errors=None: (
+    mock_ask.side_effect = lambda c, system, u, model=None, max_tokens=300, errors=None, **kwargs: (
         "1: supports - confirms it." if _STANCE_MARKER in system else "A written section."
     )
     paper = Paper(
@@ -947,3 +947,65 @@ def test_html_output_path_can_be_redirected(tmp_path, monkeypatch):
     )
     assert target.is_file()
     assert not (tmp_path / "review.html").exists()
+
+
+@patch("thesis_tools.llm.get_client")
+@patch("thesis_tools.llm.ask")
+def test_synthesis_system_prompt_is_identical_across_sections(mock_ask, mock_get_client, tmp_path):
+    """Caching is a prefix match, so anything that varies per section is a
+    silent invalidator. The target word count used to be interpolated into
+    this prompt; it belongs in the suffix, past the breakpoint."""
+    mock_get_client.return_value = object()
+    mock_ask.side_effect = lambda c, system, u, model=None, max_tokens=300, errors=None, **kwargs: (
+        "1: supports - confirms it.\n2: supports - confirms it." if _STANCE_MARKER in system else "A written section."
+    )
+    inputs = _review_inputs(tmp_path, _two_sided_source(tmp_path))
+    inputs.sub_questions = [
+        "Does digital transformation reduce environmental impact?",
+        "What limits the effect of digital transformation?",
+    ]
+    run_literature_review(inputs)
+
+    calls = _calls_matching(mock_ask, _SYNTHESIS_MARKER)
+    assert len(calls) == 2
+    assert calls[0].args[1] == calls[1].args[1]
+    # ...and the per-section bits really are past the breakpoint.
+    assert "words" not in calls[0].args[1].split("A target length is given")[0]
+    assert calls[0].kwargs["cache_suffix"] != calls[1].kwargs["cache_suffix"]
+
+
+@patch("thesis_tools.llm.get_client")
+@patch("thesis_tools.llm.ask")
+def test_synthesis_requests_caching_by_default_and_not_when_disabled(mock_ask, mock_get_client, tmp_path):
+    mock_get_client.return_value = object()
+    mock_ask.side_effect = lambda c, system, u, model=None, max_tokens=300, errors=None, **kwargs: (
+        "1: supports - confirms it." if _STANCE_MARKER in system else "A written section."
+    )
+
+    run_literature_review(_review_inputs(tmp_path, _two_sided_source(tmp_path)))
+    assert _calls_matching(mock_ask, _SYNTHESIS_MARKER)[0].kwargs["cache"] is True
+
+    mock_ask.reset_mock()
+    run_literature_review(_review_inputs(tmp_path, _two_sided_source(tmp_path), use_prompt_cache=False))
+    assert _calls_matching(mock_ask, _SYNTHESIS_MARKER)[0].kwargs["cache"] is False
+
+
+@patch("thesis_tools.llm.get_client")
+@patch("thesis_tools.llm.ask")
+def test_run_reports_what_the_drafting_calls_actually_cost(mock_ask, mock_get_client, tmp_path, capsys):
+    """A cache that never reads is overhead paid for nothing — the run has to
+    surface the counters, not just hope."""
+    mock_get_client.return_value = object()
+
+    def _ask(client, system, user, model=None, max_tokens=300, errors=None, usage_totals=None, **kwargs):
+        if usage_totals is not None:
+            usage_totals["input_tokens"] = usage_totals.get("input_tokens", 0) + 1000
+            usage_totals["cache_read_input_tokens"] = usage_totals.get("cache_read_input_tokens", 0) + 40000
+        return "1: supports - confirms it." if _STANCE_MARKER in system else "A written section."
+
+    mock_ask.side_effect = _ask
+    run_literature_review(_review_inputs(tmp_path, _two_sided_source(tmp_path)))
+
+    err = capsys.readouterr().err
+    assert "cache-read" in err
+    assert "nothing was read from the prompt cache" not in err

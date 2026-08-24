@@ -596,6 +596,31 @@ classification rather than the drafting model — an explicit `--llm-model`
 still applies to both, and switching models correctly invalidates the cache
 rather than handing back what a cheaper model said earlier. Pass
 `--no-stance-cache` to force a fresh classification.
+
+**The drafting prompts are cached, the small ones deliberately aren't.** A
+section's prompt carries whole papers — tens of thousands of tokens — so
+those calls ask Claude to cache the prompt. Re-run the draft within five
+minutes (tuning `--words-per-question`, fixing a sub-question, adding one
+paper) and the unchanged papers are read back at a tenth of the input price
+instead of being charged in full. Two details make that actually work rather
+than just look like it does:
+
+- The per-section bits — the sub-question and the target word count — are
+  sent *after* the cache breakpoint, so changing the target length doesn't
+  invalidate the papers sitting in front of it. Caching is a prefix match,
+  and anything that varies inside the prefix quietly turns every read into a
+  fresh write.
+- The small calls (introduction, conclusion) and the per-paper
+  classification calls are **not** cached, on purpose. The minimum cacheable
+  prefix is 1,024 tokens on Sonnet and 4,096 on Haiku; below that a cache
+  request stores nothing at all, silently, while still costing 1.25x to
+  attempt. Repeat runs of the per-paper work are covered by the on-disk
+  stance cache above, which costs nothing.
+
+Every run prints what it actually spent (`Drafting used 12,400 input, 3,100
+output, 0 cache-write, 88,000 cache-read tokens`) — cache reads are the
+number worth watching, since a cache that only ever writes is overhead paid
+for nothing. Pass `--no-prompt-cache` for a genuinely one-shot run.
 - **In-text citations match whatever style you've configured** (`--style` —
   APA/Harvard: `(Smith, 2020)`; Chicago author-date: `(Smith 2020)`; MLA:
   `(Smith)`/`(Smith 15)`; IEEE: numbered `[3]`, assigned by order of first

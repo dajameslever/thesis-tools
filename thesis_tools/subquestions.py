@@ -209,6 +209,12 @@ def _llm_stance_for_paper(client, paper: Paper, sub_questions: List[str], model:
     user_message = (
         f"Sub-questions:\n{numbered}\n\nPaper title: {paper.title}\n{label}: {text[:MAX_TEXT_CHARS_FOR_STANCE_PROMPT]}"
     )
+    # Deliberately not cached. Two reasons: this runs on the cheap extraction
+    # tier, whose minimum cacheable prefix is 4096 tokens — higher than a
+    # paper-plus-sub-questions prompt usually reaches, so a breakpoint would
+    # silently store nothing; and every paper's prompt is different anyway,
+    # so there would be no prefix to read back. Re-runs are covered far
+    # better by the on-disk stance cache, which costs nothing at all.
     response = llm.ask(client, _STANCE_SYSTEM_PROMPT, user_message, model=model, max_tokens=400)
     if not response:
         return None

@@ -11,7 +11,7 @@ from __future__ import annotations
 import os
 import re
 import sys
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from . import env as _env
 
@@ -109,6 +109,42 @@ def _trim_to_last_sentence(text: str) -> str:
 STREAMING_MAX_TOKENS_THRESHOLD = 1500
 
 
+# Prompt caching is a prefix match, and the minimum cacheable prefix is
+# model-dependent — 1024 tokens on Sonnet 5, but 4096 on Haiku 4.5. A prefix
+# under the minimum silently does not cache: no error, just no entry. Every
+# system prompt in this toolkit is well under 1024 tokens on its own, so
+# caching is only worth requesting where the *whole* prompt is large — which
+# in practice means the literature-review drafting calls, whose prompts carry
+# entire papers. See ask()'s `cache` argument.
+def _usage_of(message) -> dict:
+    usage = getattr(message, "usage", None)
+    return {
+        "input_tokens": getattr(usage, "input_tokens", 0) or 0,
+        "output_tokens": getattr(usage, "output_tokens", 0) or 0,
+        "cache_creation_input_tokens": getattr(usage, "cache_creation_input_tokens", 0) or 0,
+        "cache_read_input_tokens": getattr(usage, "cache_read_input_tokens", 0) or 0,
+    }
+
+
+def format_usage(totals: Dict[str, int]) -> Optional[str]:
+    """One line describing what a run actually spent, or None if nothing was
+    sent. Cache reads are the number that matters: a cache that only ever
+    writes is 1.25x overhead paid for nothing, and the only way to tell the
+    two apart is to look at the counters.
+    """
+    if not totals or not any(totals.values()):
+        return None
+    parts = [
+        f"{totals.get('input_tokens', 0):,} input",
+        f"{totals.get('output_tokens', 0):,} output",
+    ]
+    written = totals.get("cache_creation_input_tokens", 0)
+    read = totals.get("cache_read_input_tokens", 0)
+    if written or read:
+        parts.append(f"{written:,} cache-write, {read:,} cache-read")
+    return ", ".join(parts) + " tokens"
+
+
 def ask(
     client,
     system: str,
@@ -116,6 +152,9 @@ def ask(
     model: str = DEFAULT_MODEL,
     max_tokens: int = 300,
     errors: Optional[List[str]] = None,
+    cache: bool = False,
+    cache_suffix: Optional[str] = None,
+    usage_totals: Optional[Dict[str, int]] = None,
 ) -> Optional[str]:
     """Single-turn request. Returns the text response, or None on any failure.
 
@@ -125,23 +164,53 @@ def ask(
     the fallback is markedly worse the caller needs to be able to say what
     went wrong rather than silently shipping the lesser output as though
     nothing had happened.
+
+    `cache=True` asks the API to cache this prompt. That pays when the *same*
+    prefix is sent again inside the five-minute TTL: re-running a draft while
+    tuning it, which is the normal way this tool is used. It does not pay
+    within a single run, where every call's prompt differs — a cache write
+    costs 1.25x and is only recouped on a read — so callers should request it
+    only where a repeat is likely and the prompt is big enough to matter.
+
+    `cache_suffix` is text sent *after* the cache breakpoint. Caching is a
+    prefix match, so anything that varies between otherwise-identical runs
+    (a word-count target, a tweaked instruction) invalidates the entry if it
+    sits inside the cached part. Putting those bits in `cache_suffix` keeps
+    the expensive, stable part of the prompt — the papers — cacheable across
+    a re-run that only changed a knob. With no suffix, a top-level
+    `cache_control` places the breakpoint at the end of the whole prompt,
+    which only ever hits on a byte-identical repeat.
+
+    `usage_totals` accumulates token counts across calls so a caller can
+    report whether the cache is actually being hit. A cache that never reads
+    is pure overhead, and the only way to know is to look.
     """
     try:
+        if cache_suffix and cache:
+            content = [
+                {"type": "text", "text": user, "cache_control": {"type": "ephemeral"}},
+                {"type": "text", "text": cache_suffix},
+            ]
+        elif cache_suffix:
+            content = f"{user}\n\n{cache_suffix}"
+        else:
+            content = user
+        request = {
+            "model": model,
+            "max_tokens": max_tokens,
+            "system": system,
+            "messages": [{"role": "user", "content": content}],
+        }
+        if cache and not cache_suffix:
+            request["cache_control"] = {"type": "ephemeral"}
         if max_tokens >= STREAMING_MAX_TOKENS_THRESHOLD:
-            with client.messages.stream(
-                model=model,
-                max_tokens=max_tokens,
-                system=system,
-                messages=[{"role": "user", "content": user}],
-            ) as stream:
+            with client.messages.stream(**request) as stream:
                 message = stream.get_final_message()
         else:
-            message = client.messages.create(
-                model=model,
-                max_tokens=max_tokens,
-                system=system,
-                messages=[{"role": "user", "content": user}],
-            )
+            message = client.messages.create(**request)
+        if usage_totals is not None:
+            for key, value in _usage_of(message).items():
+                usage_totals[key] = usage_totals.get(key, 0) + value
         text = "".join(block.text for block in message.content if getattr(block, "type", None) == "text").strip()
         if not text:
             if errors is not None:
