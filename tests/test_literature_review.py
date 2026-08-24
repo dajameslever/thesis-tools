@@ -787,7 +787,7 @@ def test_successful_sections_report_the_target_length(mock_ask, mock_get_client,
 
 @patch("thesis_tools.llm.get_client")
 @patch("thesis_tools.llm.ask")
-def test_words_per_question_drives_the_prompt_and_the_token_budget(mock_ask, mock_get_client, tmp_path):
+def test_explicit_words_per_question_overrides_the_scaling(mock_ask, mock_get_client, tmp_path):
     mock_get_client.return_value = object()
     mock_ask.side_effect = lambda c, system, u, model=None, max_tokens=300, errors=None: (
         "1: supports - confirms it." if _STANCE_MARKER in system else "A written section."
@@ -795,16 +795,103 @@ def test_words_per_question_drives_the_prompt_and_the_token_budget(mock_ask, moc
     run_literature_review(_review_inputs(tmp_path, _two_sided_source(tmp_path), words_per_question=1600))
 
     call = _calls_matching(mock_ask, _SYNTHESIS_MARKER)[0]
-    assert "roughly 1600 words" in call.args[1]
+    assert "about 1600 words" in call.args[1]
     assert call.kwargs["max_tokens"] == 4000  # 1600 * 2.5, room to run long
+    assert "targeting ~1600 words" in (tmp_path / "review.md").read_text()
 
 
-def test_default_target_length_is_a_section_not_a_paragraph():
-    from thesis_tools.literature_review import DEFAULT_WORDS_PER_QUESTION, MAX_PAPERS_PER_SYNTHESIS_CALL
+@patch("thesis_tools.llm.get_client")
+@patch("thesis_tools.llm.ask")
+def test_section_length_scales_to_the_evidence_behind_the_question(mock_ask, mock_get_client, tmp_path):
+    """Limited sources, limited summary — two papers must not be asked to
+    carry the same word count as a dozen."""
+    from thesis_tools.literature_review import target_words_for
 
-    assert DEFAULT_WORDS_PER_QUESTION >= 1000
-    # A 1000+ word section needs more than an outline's worth of sources.
-    assert MAX_PAPERS_PER_SYNTHESIS_CALL >= 10
+    mock_get_client.return_value = object()
+    mock_ask.side_effect = lambda c, system, u, model=None, max_tokens=300, errors=None: (
+        "1: supports - confirms it." if _STANCE_MARKER in system else "A written section."
+    )
+    run_literature_review(_review_inputs(tmp_path, _two_sided_source(tmp_path)))
+
+    call = _calls_matching(mock_ask, _SYNTHESIS_MARKER)[0]
+    assert f"about {target_words_for(2)} words" in call.args[1]
+    assert "scaled to its evidence" in (tmp_path / "review.md").read_text()
+
+
+def test_target_words_scales_with_sources_within_bounds():
+    from thesis_tools.literature_review import (
+        MAX_WORDS_PER_QUESTION,
+        MIN_WORDS_PER_QUESTION,
+        target_words_for,
+    )
+
+    assert target_words_for(1) == MIN_WORDS_PER_QUESTION       # floored
+    assert target_words_for(100) == MAX_WORDS_PER_QUESTION     # capped
+    assert target_words_for(3) < target_words_for(8)           # monotonic
+    # "A lot of papers" should land in the range the user asked for.
+    assert 1000 <= target_words_for(8) <= 2000
+    assert 1000 <= target_words_for(14) <= 2000
+
+
+def test_enough_sources_are_available_to_reach_the_upper_range():
+    from thesis_tools.literature_review import (
+        MAX_PAPERS_PER_SYNTHESIS_CALL,
+        MAX_WORDS_PER_QUESTION,
+        target_words_for,
+    )
+
+    assert target_words_for(MAX_PAPERS_PER_SYNTHESIS_CALL) == MAX_WORDS_PER_QUESTION
+
+
+@patch("thesis_tools.llm.get_client")
+@patch("thesis_tools.llm.ask")
+def test_sections_paraphrase_rather_than_quote_by_default(mock_ask, mock_get_client, tmp_path):
+    mock_get_client.return_value = object()
+    mock_ask.side_effect = lambda c, system, u, model=None, max_tokens=300, errors=None: (
+        "1: supports - confirms it." if _STANCE_MARKER in system else "A written section."
+    )
+    run_literature_review(_review_inputs(tmp_path, _two_sided_source(tmp_path)))
+
+    system_prompt = _calls_matching(mock_ask, _SYNTHESIS_MARKER)[0].args[1]
+    assert "PARAPHRASE THROUGHOUT" in system_prompt
+    assert "QUOTE VERBATIM" not in system_prompt
+    assert "CONDENSE" in system_prompt
+
+
+@patch("thesis_tools.llm.get_client")
+@patch("thesis_tools.llm.ask")
+def test_allow_quotes_restores_the_verbatim_quoting_rules(mock_ask, mock_get_client, tmp_path):
+    mock_get_client.return_value = object()
+    mock_ask.side_effect = lambda c, system, u, model=None, max_tokens=300, errors=None: (
+        "1: supports - confirms it." if _STANCE_MARKER in system else "A written section."
+    )
+    run_literature_review(_review_inputs(tmp_path, _two_sided_source(tmp_path), allow_quotes=True))
+
+    calls = _calls_matching(mock_ask, _SYNTHESIS_MARKER)
+    system_prompt, user_message = calls[0].args[1], calls[0].args[2]
+    assert "QUOTE VERBATIM" in system_prompt
+    assert "PARAPHRASE THROUGHOUT" not in system_prompt
+    assert "Abstract (verbatim)" in user_message
+
+
+@patch("thesis_tools.llm.get_client")
+@patch("thesis_tools.llm.ask")
+def test_paper_blocks_ask_for_understanding_not_quotation_by_default(mock_ask, mock_get_client, tmp_path):
+    mock_get_client.return_value = object()
+    mock_ask.side_effect = lambda c, system, u, model=None, max_tokens=300, errors=None: (
+        "1: supports - confirms it." if _STANCE_MARKER in system else "A written section."
+    )
+    paper = Paper(
+        title="Digital transformation reduces environmental impact", year=2023, authors=["Ada Lovelace"],
+        doi="10.1/a", full_text_excerpt="[Page 1]\nWe find a significant effect on environmental impact.",
+    )
+    source = tmp_path / "src.json"
+    _write_topic_cache(source, [paper])
+    run_literature_review(_review_inputs(tmp_path, source))
+
+    user_message = _calls_matching(mock_ask, _SYNTHESIS_MARKER)[0].args[2]
+    assert "put it in your own words" in user_message
+    assert "quote this exact wording only" not in user_message
 
 
 def test_heuristic_fallback_summarises_rather_than_dumping_the_title_page(tmp_path, monkeypatch):

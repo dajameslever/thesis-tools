@@ -43,14 +43,24 @@ DISCLAIMER = (
 )
 
 
-# A section of 1000-2000 words needs real material behind it; six papers is
-# an outline's worth, not a literature review's.
+# A section needs more than an outline's worth of sources behind it — but
+# each is condensed to its essentials, so a dozen costs little space.
 MAX_PAPERS_PER_SYNTHESIS_CALL = 14
 
-# Target length for each sub-question's section. A literature review chapter
-# runs to roughly this per question — the previous 150-250 words produced a
-# paragraph, not a section.
-DEFAULT_WORDS_PER_QUESTION = 1200
+# Section length scales with how much evidence a question actually has
+# behind it: a well-supported question earns 1000-2000 words, a thinly
+# supported one gets a short section rather than the same length padded out.
+# Roughly a paragraph's worth of prose per source, floored so a single-source
+# section is still a section, and capped so no question runs away.
+WORDS_PER_SOURCE = 150
+MIN_WORDS_PER_QUESTION = 250
+MAX_WORDS_PER_QUESTION = 2000
+
+
+def target_words_for(source_count: int) -> int:
+    """How long this sub-question's section should aim to be, given how many
+    papers actually speak to it. Limited sources, limited summary."""
+    return max(MIN_WORDS_PER_QUESTION, min(WORDS_PER_SOURCE * source_count, MAX_WORDS_PER_QUESTION))
 
 # Total characters of paper text allowed into one synthesis prompt. Nothing
 # is trimmed while the papers fit inside this, which is the normal case —
@@ -82,7 +92,13 @@ class LiteratureReviewInputs:
     extraction_llm_model: str = llm.DEFAULT_EXTRACTION_MODEL
     stance_cache_path: Optional[str] = None
     min_relevance: float = 0.1
-    words_per_question: int = DEFAULT_WORDS_PER_QUESTION
+    # None scales each section to the evidence behind it (see
+    # target_words_for); a number forces that target on every section.
+    words_per_question: Optional[int] = None
+    # Off by default: the point of a review section is to show the sources
+    # were understood, which paraphrase demonstrates and quotation does not.
+    # The same dissertation quotes 27 words in ~2,900 — under 1%.
+    allow_quotes: bool = False
     output_path: Optional[str] = None
     # Written alongside the Markdown draft unless disabled — same content,
     # styled for reading in a browser rather than in a text editor.
@@ -184,53 +200,77 @@ def _fit_paper_texts(texts: List[str], budget: int = MAX_PROMPT_TEXT_CHARS) -> T
 # review is expected to critically evaluate competing evidence, not just
 # report that it exists.
 _SYNTHESIS_SYSTEM_PROMPT_TEMPLATE = (
-    "You write ONE SECTION of a literature review — roughly {words} words, several paragraphs — "
-    "addressing the given sub-question, using ONLY the material provided below for each paper. "
-    "This is a full section of a thesis chapter, not a summary paragraph: develop the argument "
-    "across paragraphs, each making its own point and building on the last, the way a published "
-    "review does. Do not pad to reach the length; if the material genuinely does not support a "
-    "section this long, write what it does support and say plainly where the evidence runs out.\n"
-    "- STRUCTURE IT. Open by framing what is at stake in this sub-question, then work through the "
-    "evidence thematically across several paragraphs, and close by stating where the weight of "
-    "evidence currently sits. Do not use sub-headings or bullet points — continuous academic prose "
-    "only.\n"
+    "You write ONE SECTION of a literature review — about {words} words — addressing the given "
+    "sub-question, using ONLY the material provided below for each paper.\n"
+    "- CONDENSE. Your job is to show that the literature has been read and understood, not to "
+    "reproduce it. Reduce each paper to its core question and its essential finding — what it set "
+    "out to establish, what it actually shows, and what that means for this sub-question — and "
+    "write from that. A source that took thirty pages should take a clause or a sentence here. "
+    "Never devote a whole paragraph to a single paper.\n"
+    "- EVERY SENTENCE MUST CARRY SOMETHING. No throat-clearing openers, no restating the "
+    "sub-question, no sentences that only announce what the next sentence will say. If a sentence "
+    "would survive being deleted, delete it. Coming in under the target because the material is "
+    "thin is correct; padding to reach it is not.\n"
+    "- STRUCTURE IT. Open by framing what is at stake in this sub-question, work through the "
+    "evidence thematically, and close by stating where the weight of evidence currently sits. "
+    "Continuous academic prose — no sub-headings, no bullet points.\n"
     "- SYNTHESIZE, don't summarize source-by-source. Never write a 'laundry list' where every "
     "sentence starts with an author's name (e.g. 'Smith (2020) found X. Jones (2019) found Y.'). "
-    "Instead, lead with the claim or theme, and weave citations in as support — explicitly comparing, "
-    "contrasting, or grouping sources that agree or disagree within the same sentence or two.\n"
-    "- WHEN THE PAPERS DISAGREE, DEBATE IT. If the papers given include both a 'supports' and a "
-    "'challenges' stance, do not just note that they disagree — structure the paragraph as a genuine "
-    "debate: present the case FOR first (the supporting evidence and the reasoning behind it), then "
-    "the case AGAINST (the challenging evidence and its reasoning), then close with a brief critical "
-    "evaluation weighing the two — which side has the stronger, more recent, or more directly relevant "
-    "evidence, or a plausible reason for the disagreement (different populations, methods, contexts, "
-    "etc). If every paper given shares the same stance, skip the debate structure and just synthesize "
-    "that consistent evidence.\n"
+    "Lead with the claim or theme and weave citations in as support, grouping sources that agree "
+    "and naming those that do not.\n"
+    "- WHEN THE PAPERS DISAGREE, DEBATE IT — briefly. Give the case for, the case against, and a "
+    "short judgement on which evidence is stronger, more recent, or more directly relevant, or why "
+    "they might reasonably differ (different populations, methods, contexts). A few sentences, not "
+    "a few paragraphs. If every paper given shares the same stance, skip this and synthesize the "
+    "consistent evidence.\n"
     "- CITE USING EXACTLY THE MARKER GIVEN. Each paper below comes with the exact in-text citation "
     "marker to use for it (already matching the student's chosen citation style) — reproduce that "
     "marker's punctuation and form exactly, right after the claim it supports. Never invent a "
-    "different form or guess at style rules yourself. When quoting a passage near a '[Page N]' marker, "
-    "work that page number into the given marker the natural way for its form (e.g. ', p. N' before "
-    "the closing parenthesis for an author-date/MLA-style marker, or 'p. N' alongside a numbered "
-    "marker like [3]).\n"
-    "- PREFER PARAPHRASE. Use a short direct quotation only when the exact wording matters — a precise "
-    "definition, a specific finding stated in a distinctive or memorable way, or language too important "
-    "to paraphrase safely. Use at most 1-2 direct quotations in the whole paragraph, even with more "
-    "papers available — quoting every paper is a sign of weak synthesis, not thoroughness.\n"
-    "- QUOTE VERBATIM ONLY. Any text inside quotation marks must be copied character-for-character from "
-    "an 'Abstract' or 'Excerpt from the original document' block given below — never invent, "
-    "paraphrase-then-quote, or reconstruct a quotation from memory. If nothing given is worth quoting "
-    "directly, use zero quotations — that's the normal case, not a failure.\n"
-    "- Write in formal academic prose — full sentences and paragraphs, not bullet points.\n"
-    "- Text extracted from PDFs can contain minor artifacts (broken hyphenation, odd line breaks, "
-    "OCR noise) — if a passage looks garbled, paraphrase instead of quoting it.\n"
-    "- If the material given doesn't really address the sub-question, say that plainly instead of stretching.\n\n"
+    "different form or guess at style rules yourself.\n"
+    "{quoting}"
+    "- GROUND EVERY CLAIM. State only what the material below actually supports. Never introduce a "
+    "finding, statistic, or detail that is not there, and never sharpen a hedged claim into a "
+    "definite one.\n"
+    "- If the material given doesn't really address the sub-question, say that plainly instead of "
+    "stretching.\n\n"
     + llm.ACADEMIC_STYLE_NOTE
 )
 
+# Default. Their own thesis quotes 27 words in ~2,900 — under 1% — which is
+# what "show the reader we understand it without quoting it word for word"
+# looks like in practice. Paraphrasing throughout also removes the whole
+# class of fabricated-quotation risk.
+_PARAPHRASE_ONLY_RULES = (
+    "- PARAPHRASE THROUGHOUT — do not quote. Put every point in your own words. Reproducing a "
+    "source's sentences shows only that they were copied; compressing them accurately is what "
+    "shows they were understood. Reusing an unavoidable technical term is fine; reproducing a "
+    "phrase or sentence is not.\n"
+)
 
-def _synthesis_system_prompt(words: int) -> str:
-    return _SYNTHESIS_SYSTEM_PROMPT_TEMPLATE.format(words=words)
+# Opt-in via --allow-quotes. The verbatim rule is what keeps a quotation
+# real: an invented one is worse than none at all.
+_QUOTING_ALLOWED_RULES = (
+    "- PREFER PARAPHRASE. Use a short direct quotation only where the exact wording carries "
+    "something a paraphrase cannot — a precise definition, or a finding stated distinctively. At "
+    "most one or two in the whole section; quoting every paper signals weak synthesis, not "
+    "thoroughness.\n"
+    "- QUOTE VERBATIM ONLY. Any text inside quotation marks must be copied character-for-character "
+    "from an 'Abstract' or 'Excerpt from the original document' block below — never invent, "
+    "paraphrase-then-quote, or reconstruct from memory. Zero quotations is the normal case, not a "
+    "failure. Extracted PDF text can carry artifacts (broken hyphenation, odd line breaks, OCR "
+    "noise); if a passage looks garbled, paraphrase it instead.\n"
+    "- When quoting a passage near a '[Page N]' marker, work that page number into the given "
+    "citation marker the natural way for its form (e.g. ', p. N' before the closing parenthesis "
+    "for an author-date or MLA-style marker, or 'p. N' alongside a numbered marker like [3]).\n"
+)
+
+
+def _synthesis_system_prompt(words: int, allow_quotes: bool = False) -> str:
+    return _SYNTHESIS_SYSTEM_PROMPT_TEMPLATE.format(
+        words=words,
+        quoting=_QUOTING_ALLOWED_RULES if allow_quotes else _PARAPHRASE_ONLY_RULES,
+    )
+
 
 
 def _citation_marker_for(paper: Paper, style: str, ref_number_by_key: Dict[str, int]) -> str:
@@ -284,21 +324,33 @@ def _prompt_text_for(paper: Paper) -> str:
     return paper.full_text_excerpt or paper.abstract or ""
 
 
-def _paper_block(paper: Paper, stance_label: str, citation_marker: str = "", text: Optional[str] = None) -> str:
+def _paper_block(
+    paper: Paper,
+    stance_label: str,
+    citation_marker: str = "",
+    text: Optional[str] = None,
+    allow_quotes: bool = False,
+) -> str:
     author = paper.authors[0].split()[-1] if paper.authors and paper.authors[0].split() else "Unknown"
     marker_note = f" Cite this paper in-text using exactly: {citation_marker}." if citation_marker else ""
     lines = [f"- {author} ({paper.year or 'n.d.'}), stance: {stance_label}.{marker_note} Title: {paper.title}."]
     if paper.abstract:
-        lines.append(f'  Abstract (verbatim): "{paper.abstract}"')
+        abstract_label = "Abstract (verbatim)" if allow_quotes else "Abstract"
+        lines.append(f'  {abstract_label}: "{paper.abstract}"')
     excerpt = paper.full_text_excerpt if text is None else (text if paper.full_text_excerpt else None)
     if excerpt:
         # The whole extracted document by default, not a fixed short prefix —
         # a section that weighs both sides needs each paper's actual
         # argument, not whatever fell in the first few thousand characters.
         # _fit_paper_texts only trims when a batch would not otherwise fit.
+        usage = (
+            'quote this exact wording only, citing the nearest page marker'
+            if allow_quotes
+            else "read this for what the paper argues and found, and put it in your own words"
+        )
         lines.append(
             '  Excerpt from the original document, verbatim, "[Page N]" markers included where known '
-            f'(quote this exact wording only, citing the nearest page marker): "{excerpt}"'
+            f'({usage}): "{excerpt}"'
         )
     if not paper.abstract and not paper.full_text_excerpt:
         lines.append("  (no abstract or text available — do not make specific claims about this paper's findings)")
@@ -367,19 +419,22 @@ def _draft_synthesis_section(
         texts = [_prompt_text_for(p) for _, p in labeled]
         fitted, trimmed = _fit_paper_texts(texts)
         blocks = [
-            _paper_block(p, label, _citation_marker_for(p, inputs.style, ref_number_by_key), text)
+            _paper_block(
+                p, label, _citation_marker_for(p, inputs.style, ref_number_by_key), text, inputs.allow_quotes
+            )
             for (label, p), text in zip(labeled, fitted)
         ]
         user_message = f"Sub-question: {question}\n\nPapers:\n" + "\n".join(blocks)
         # Generous headroom over the target: a word count is a target, not a
         # cap, and running long beats being cut off mid-sentence.
         errors: List[str] = []
+        target_words = inputs.words_per_question or target_words_for(len(labeled))
         result = llm.ask(
             client,
-            _synthesis_system_prompt(inputs.words_per_question),
+            _synthesis_system_prompt(target_words, inputs.allow_quotes),
             user_message,
             model=inputs.llm_model,
-            max_tokens=max(int(inputs.words_per_question * 2.5), 1500),
+            max_tokens=max(int(target_words * 2.5), 1500),
             errors=errors,
         )
         if result:
@@ -613,7 +668,14 @@ def run_literature_review(inputs: LiteratureReviewInputs) -> str:
             "to a bullet outline because the request to Claude failed; see the warnings below"
         )
     else:
-        mode = f"Claude-written prose, targeting ~{inputs.words_per_question} words per sub-question"
+        mode = (
+            f"Claude-written prose, targeting ~{inputs.words_per_question} words per sub-question"
+            if inputs.words_per_question
+            else (
+                f"Claude-written prose, each section scaled to its evidence "
+                f"(~{WORDS_PER_SOURCE} words per source, {MIN_WORDS_PER_QUESTION}-{MAX_WORDS_PER_QUESTION} words)"
+            )
+        )
     lines[drafting_mode_index] = f"- **Drafting mode:** {mode}"
 
     report_text = "\n".join(lines)

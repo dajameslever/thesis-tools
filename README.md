@@ -536,10 +536,12 @@ list only contains papers actually cited in the draft.
   ones.
 - **With Claude** (default — uses `claude-sonnet-5`; override with
   `--llm-model claude-opus-5` if a particular draft is worth the extra cost):
-  writes a **full section of roughly 1,200 words** (`--words-per-question`;
-  a thesis literature review typically runs 1,000-2,000 words per question),
-  developed across several paragraphs rather than one summary paragraph,
-  following standard
+  writes a **section scaled to the evidence behind that question** — roughly
+  a paragraph's worth of prose per source, so a well-supported question earns
+  1,000–2,000 words and a thinly supported one gets a short section instead
+  of the same length padded out. Limited sources, limited summary.
+  `--words-per-question` forces a fixed length on every section instead.
+  Sections follow standard
   literature-review conventions — synthesizing by theme rather than
   listing sources one by one (no "Smith (2020) found X. Jones (2019) found
   Y." laundry-listing), and using a *sparing* direct quotation only when
@@ -550,6 +552,21 @@ list only contains papers actually cited in the draft.
   throwaway line noting a disagreement exists.
 - **Without Claude** (`--no-llm`, or no API key): a structured bullet outline
   grouped by stance instead of prose — still useful, just not narrative.
+
+**Condensed, and paraphrased rather than quoted.** The point of a review
+section is to show the sources were read and understood, which is
+demonstrated by compressing them accurately, not by reproducing their
+sentences. Each paper is reduced to its core question and its essential
+finding — what it set out to establish, what it shows, what that means here —
+and a source that took thirty pages may take a clause. Every sentence has to
+carry a finding or a link between findings; coming in under the target
+because the material is thin is correct, padding to reach it is not.
+
+Direct quotation is **off by default** for the same reason (a real submitted
+dissertation this was calibrated against quotes 27 words in ~2,900 — under
+1%). Pass `--allow-quotes` to permit a sparing quotation where exact wording
+genuinely carries something a paraphrase cannot; the verbatim-only rules
+still apply then, so a quotation is never invented.
 
 **You get both a Markdown file and an HTML page.** The `.md` is the one to
 edit; the `.html` beside it is the one to read — a sticky contents list, a
@@ -590,7 +607,7 @@ rather than handing back what a cheaper model said earlier. Pass
 **Full document text goes into the drafting prompt, not a truncated
 excerpt** — the whole point of debating both sides properly is seeing each
 paper's actual argument, not just whatever fell in the first few thousand
-characters. **Quoting is grounded in real text, not just abstracts.** For
+characters. **With `--allow-quotes`, quoting is grounded in real text, not just abstracts.** For
 papers Part 2 indexed locally, the draft has access to the actual extracted
 document text (with page markers for PDFs), not only the abstract — so a
 direct quotation can be a real sentence from the paper, cited with a real

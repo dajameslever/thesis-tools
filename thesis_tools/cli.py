@@ -16,7 +16,7 @@ from .library.index_store import LibraryIndex
 from .library.library_indexer import LibraryIndexerInputs, run_library_indexer
 from .library.citation_graph import DEFAULT_MIN_GAP_RELEVANCE
 from .library.visualize import build_literature_matrix, compute_stats, render_html
-from .literature_review import DEFAULT_WORDS_PER_QUESTION, LiteratureReviewInputs, run_literature_review
+from .literature_review import LiteratureReviewInputs, run_literature_review
 from .project import DEFAULT_PROJECT_PATH, ProjectState
 from .sources import ALL_SOURCES
 from .subquestions import generate_subquestions
@@ -486,10 +486,18 @@ def _build_parser() -> argparse.ArgumentParser:
         "--words-per-question",
         type=int,
         default=None,
-        help=f"Target length of each sub-question's section (default: {DEFAULT_WORDS_PER_QUESTION}). "
-        "A thesis literature review typically runs 1000-2000 words per question",
+        help="Force a fixed target length on every sub-question's section. By default each section is "
+        "scaled to the evidence behind it — roughly a paragraph per source, so a well-supported "
+        "question earns 1000-2000 words and a thinly supported one gets a short section instead of "
+        "the same length padded out",
     )
     lr.add_argument("--html-output", dest="html_output_path", default=None, help="Where to write the HTML version (default: alongside the Markdown draft)")
+    lr.add_argument(
+        "--allow-quotes",
+        action="store_true",
+        help="Permit a sparing direct quotation where exact wording matters. Off by default: a review "
+        "shows the sources were understood by condensing them, not by reproducing them",
+    )
     lr.add_argument("--no-html", dest="write_html", action="store_false", help="Write only the Markdown draft, no HTML version")
     lr.set_defaults(write_html=True)
     lr.add_argument("--project-file", default=DEFAULT_PROJECT_PATH, help=f"Where shared project state lives (default: {DEFAULT_PROJECT_PATH})")
@@ -863,6 +871,7 @@ def _run_literature_review_command(args: argparse.Namespace) -> int:
     inputs.stance_cache_path = _stance_cache_for_sources(args, project, inputs.use_llm)
     if args.words_per_question is not None:
         inputs.words_per_question = args.words_per_question
+    inputs.allow_quotes = args.allow_quotes
     inputs.write_html = args.write_html
     inputs.html_output_path = args.html_output_path
 
