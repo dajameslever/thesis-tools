@@ -477,3 +477,207 @@ def test_run_literature_review_prints_one_llm_notice(tmp_path, monkeypatch, caps
     stderr = capsys.readouterr().err
     assert stderr.count("ANTHROPIC_API_KEY not set") == 1
     assert "Claude requested but unavailable" in stderr
+
+
+def test_papers_matching_only_a_subquestion_are_kept(tmp_path, monkeypatch):
+    """The regression: relevance was scored against the research question
+    alone, so a paper that was a direct hit on a sub-question — and nothing
+    else — got dropped before it was ever classified."""
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    sub_question_match = Paper(
+        title="School start times and academic outcomes",
+        year=2017,
+        authors=["Ada Early"],
+        doi="10.1/start",
+        abstract="Later start times were significantly associated with better outcomes, consistent with theory.",
+    )
+    cache_path = tmp_path / "report.md.papers.json"
+    _write_topic_cache(cache_path, [sub_question_match])
+
+    output_path = tmp_path / "review.md"
+    run_literature_review(
+        LiteratureReviewInputs(
+            field="Psychology",
+            working_title="Sleep and decision-making",
+            research_question="Does sleep deprivation affect adolescent decision-making?",
+            sub_questions=["Do later school start times improve outcomes?"],
+            paper_sources=[str(cache_path)],
+            output_path=str(output_path),
+            use_llm=False,
+        )
+    )
+    text = output_path.read_text()
+    assert "Early" in text  # cited, not filtered out
+    assert "Drawing on:** 1 of 1 paper(s)" in text
+
+
+def test_papers_matching_no_question_are_ignored(tmp_path, monkeypatch, capsys):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    on_topic = Paper(
+        title="Sleep deprivation and adolescent decision-making",
+        year=2020, authors=["Jane Doe"], doi="10.1/on",
+        abstract="We find a significant effect of sleep deprivation on adolescent decision-making, consistent with theory.",
+    )
+    off_topic = Paper(
+        title="Coffee bean price volatility in Brazil",
+        year=2018, authors=["Bob Bean"], doi="10.1/off",
+        abstract="Coffee prices in Brazil rose sharply following drought conditions.",
+    )
+    cache_path = tmp_path / "report.md.papers.json"
+    _write_topic_cache(cache_path, [on_topic, off_topic])
+
+    output_path = tmp_path / "review.md"
+    run_literature_review(
+        LiteratureReviewInputs(
+            field="Psychology",
+            working_title="Sleep and decision-making",
+            research_question="Does sleep deprivation affect adolescent decision-making?",
+            sub_questions=["Does sleep loss increase risk-taking in adolescents?"],
+            paper_sources=[str(cache_path)],
+            output_path=str(output_path),
+            use_llm=False,
+        )
+    )
+    text = output_path.read_text()
+    assert "Drawing on:** 1 of 2 paper(s) from 1 source file(s) (1 ignored" in text
+    assert "Bean" not in text
+    assert "Ignoring 1 of 2 paper(s) that do not match" in capsys.readouterr().err
+
+
+def test_no_matching_papers_falls_back_loudly(tmp_path, monkeypatch, capsys):
+    """An empty draft helps nobody, but silently reviewing the wrong
+    literature is worse — the fallback has to be visible in the draft."""
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    off_topic = Paper(
+        title="Coffee bean price volatility in Brazil",
+        year=2018, authors=["Bob Bean"], doi="10.1/off",
+        abstract="Coffee prices in Brazil rose sharply.",
+    )
+    cache_path = tmp_path / "report.md.papers.json"
+    _write_topic_cache(cache_path, [off_topic])
+
+    output_path = tmp_path / "review.md"
+    run_literature_review(
+        LiteratureReviewInputs(
+            field="Psychology",
+            working_title="Sleep and decision-making",
+            research_question="Does sleep deprivation affect adolescent decision-making?",
+            sub_questions=["Does sleep loss increase risk-taking in adolescents?"],
+            paper_sources=[str(cache_path)],
+            output_path=str(output_path),
+            use_llm=False,
+        )
+    )
+    text = output_path.read_text()
+    assert "No paper matched your questions" in text
+    assert "review of the wrong literature" in text
+    assert "drafting from all of them anyway" in capsys.readouterr().err
+
+
+def test_literature_review_inputs_default_to_the_cheap_classification_tier():
+    inputs = LiteratureReviewInputs(
+        field="X", working_title="Y", research_question=None, sub_questions=["Q?"], paper_sources=[]
+    )
+    assert inputs.llm_model == "claude-sonnet-5"          # drafting
+    assert inputs.extraction_llm_model == "claude-haiku-4-5"  # classification
+
+
+# thesis_tools.literature_review.llm and thesis_tools.subquestions.llm are the
+# same module object, so patching "llm.ask" through both paths leaves only one
+# mock in place. Patch it once and tell the calls apart by their system prompt.
+_STANCE_MARKER = "You assess how a paper"
+_SYNTHESIS_MARKER = "You write ONE literature-review paragraph"
+
+
+def _calls_matching(mock, marker):
+    return [c for c in mock.call_args_list if marker in c.args[1]]
+
+
+@patch("thesis_tools.llm.get_client")
+@patch("thesis_tools.llm.ask")
+def test_classification_uses_the_extraction_model_not_the_drafting_model(mock_ask, mock_get_client, tmp_path):
+    mock_get_client.return_value = object()
+    mock_ask.return_value = "1: supports - confirms it."
+
+    paper = Paper(title="Sleep and decision-making", year=2020, authors=["Jane Doe"], doi="10.1/a",
+                  abstract="We find a significant effect of sleep on decision-making.")
+    cache_path = tmp_path / "report.md.papers.json"
+    _write_topic_cache(cache_path, [paper])
+
+    run_literature_review(
+        LiteratureReviewInputs(
+            field="X", working_title="Sleep",
+            research_question="Does sleep affect decision-making?",
+            sub_questions=["Does sleep affect decision-making?"],
+            paper_sources=[str(cache_path)],
+            output_path=str(tmp_path / "review.md"),
+            use_llm=True, min_relevance=0.0,
+        )
+    )
+
+    stance_calls = _calls_matching(mock_ask, _STANCE_MARKER)
+    synthesis_calls = _calls_matching(mock_ask, _SYNTHESIS_MARKER)
+    assert stance_calls and synthesis_calls
+    assert all(c.kwargs["model"] == "claude-haiku-4-5" for c in stance_calls)
+    assert all(c.kwargs["model"] == "claude-sonnet-5" for c in synthesis_calls)
+
+
+@patch("thesis_tools.llm.get_client")
+@patch("thesis_tools.llm.ask")
+def test_classification_reuses_the_stance_cache_across_runs(mock_ask, mock_get_client, tmp_path):
+    """Part 3 must not re-pay for a classification visualize-library already
+    made against the same paper and the same questions."""
+    mock_get_client.return_value = object()
+    mock_ask.return_value = "1: supports - confirms it."
+
+    paper = Paper(title="Sleep and decision-making", year=2020, authors=["Jane Doe"], doi="10.1/a",
+                  abstract="We find a significant effect of sleep on decision-making.")
+    source = tmp_path / "report.md.papers.json"
+    _write_topic_cache(source, [paper])
+    stance_cache = str(tmp_path / "stance_cache.json")
+
+    def _run():
+        run_literature_review(
+            LiteratureReviewInputs(
+                field="X", working_title="Sleep",
+                research_question="Does sleep affect decision-making?",
+                sub_questions=["Does sleep affect decision-making?"],
+                paper_sources=[str(source)],
+                output_path=str(tmp_path / "review.md"),
+                use_llm=True, min_relevance=0.0,
+                stance_cache_path=stance_cache,
+            )
+        )
+
+    _run()
+    assert len(_calls_matching(mock_ask, _STANCE_MARKER)) == 1
+    _run()
+    assert len(_calls_matching(mock_ask, _STANCE_MARKER)) == 1  # reused, not re-classified
+
+
+@patch("thesis_tools.llm.get_client")
+@patch("thesis_tools.llm.ask")
+def test_without_a_cache_path_every_run_reclassifies(mock_ask, mock_get_client, tmp_path):
+    mock_get_client.return_value = object()
+    mock_ask.return_value = "1: supports - confirms it."
+
+    paper = Paper(title="Sleep and decision-making", year=2020, authors=["Jane Doe"], doi="10.1/a",
+                  abstract="We find a significant effect of sleep on decision-making.")
+    source = tmp_path / "report.md.papers.json"
+    _write_topic_cache(source, [paper])
+
+    def _run():
+        run_literature_review(
+            LiteratureReviewInputs(
+                field="X", working_title="Sleep",
+                research_question="Does sleep affect decision-making?",
+                sub_questions=["Does sleep affect decision-making?"],
+                paper_sources=[str(source)],
+                output_path=str(tmp_path / "review.md"),
+                use_llm=True, min_relevance=0.0,
+            )
+        )
+
+    _run()
+    _run()
+    assert len(_calls_matching(mock_ask, _STANCE_MARKER)) == 2

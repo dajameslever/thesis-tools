@@ -53,6 +53,13 @@ class LiteratureReviewInputs:
     # Sonnet by default — pass --llm-model claude-opus-5 explicitly if the
     # extra cost is worth it for a particular draft.
     llm_model: str = llm.DEFAULT_MODEL
+    # Classifying each paper's stance against each sub-question is bulk
+    # extraction work, not drafting — so it takes the cheap tier, and stays
+    # on the same model visualize-library uses. Same model + same cache file
+    # means Part 3 reuses classifications already paid for rather than
+    # re-running them.
+    extraction_llm_model: str = llm.DEFAULT_EXTRACTION_MODEL
+    stance_cache_path: Optional[str] = None
     min_relevance: float = 0.1
     output_path: Optional[str] = None
 
@@ -332,16 +339,49 @@ def run_literature_review(inputs: LiteratureReviewInputs) -> str:
             "or pass --topic-cache/--library-index explicitly."
         )
 
-    query_text = inputs.research_question or inputs.working_title
-    scored = sorted(((p, score_relevance(query_text, p)) for p in papers), key=lambda pair: pair[1], reverse=True)
+    # Score against every question the review is actually asking, not just
+    # the headline one, and keep a paper if it matches ANY of them. Scoring
+    # on the research question alone silently dropped papers that were a
+    # direct hit on a sub-question: "School start times and academic
+    # outcomes" scores 0.00 against "Does sleep deprivation affect
+    # adolescent decision-making?" while scoring 0.67 against the
+    # sub-question it was indexed for.
+    questions = [q for q in ([inputs.research_question or inputs.working_title] + list(inputs.sub_questions)) if q]
+    scored = sorted(
+        ((p, max(score_relevance(q, p) for q in questions)) for p in papers),
+        key=lambda pair: pair[1],
+        reverse=True,
+    )
     relevant = [p for p, r in scored if r >= inputs.min_relevance]
+    off_topic_count = len(papers) - len(relevant)
+    used_fallback = False
     if not relevant:
-        # Better an unfiltered draft than an empty one — the relevance
-        # threshold is a quality filter, not a hard requirement.
+        # An empty draft helps nobody, but silently reviewing the wrong
+        # literature is worse — fall back loudly, and say so in the draft
+        # itself rather than only on stderr.
+        used_fallback = True
         relevant = [p for p, _ in scored]
+        print(
+            f"None of the {len(papers)} paper(s) scored at least {inputs.min_relevance} against your "
+            "question or sub-questions — drafting from all of them anyway. Treat the result with "
+            "suspicion: it may be a review of the wrong literature.",
+            file=sys.stderr,
+        )
+    elif off_topic_count:
+        print(
+            f"Ignoring {off_topic_count} of {len(papers)} paper(s) that do not match your question or "
+            f"sub-questions (relevance below {inputs.min_relevance}).",
+            file=sys.stderr,
+        )
 
     client = llm.get_client(quiet=True) if inputs.use_llm else None
-    analysis = analyze_subquestions(inputs.sub_questions, relevant, use_llm=inputs.use_llm, model=inputs.llm_model)
+    analysis = analyze_subquestions(
+        inputs.sub_questions,
+        relevant,
+        use_llm=inputs.use_llm,
+        model=inputs.extraction_llm_model,
+        cache_path=inputs.stance_cache_path,
+    )
 
     now = _dt.datetime.now().strftime("%Y-%m-%d %H:%M")
     lines: List[str] = []
@@ -355,10 +395,27 @@ def run_literature_review(inputs: LiteratureReviewInputs) -> str:
     lines.append(f"- **Working title:** {inputs.working_title}")
     if inputs.research_question:
         lines.append(f"- **Research question:** {inputs.research_question}")
-    with_full_text = sum(1 for p in papers if p.full_text_excerpt)
-    lines.append(f"- **Drawing on:** {len(papers)} paper(s) from {len(inputs.paper_sources)} source file(s)")
+    # Counted over the papers actually in scope, not everything loaded — the
+    # header claiming "drawing on 41 papers" when 33 were ignored as
+    # off-topic overstates what the draft rests on.
+    with_full_text = sum(1 for p in relevant if p.full_text_excerpt)
+    ignored = (
+        f" ({off_topic_count} ignored as not matching your question or sub-questions)"
+        if off_topic_count and not used_fallback
+        else ""
+    )
     lines.append(
-        f"- **Real text available for quoting:** {with_full_text} of {len(papers)} paper(s) "
+        f"- **Drawing on:** {len(relevant)} of {len(papers)} paper(s) from "
+        f"{len(inputs.paper_sources)} source file(s){ignored}"
+    )
+    if used_fallback:
+        lines.append(
+            f"- ⚠️ **No paper matched your questions** (nothing scored at least {inputs.min_relevance}), "
+            "so this draft was written from all of them anyway — it may be a review of the wrong "
+            "literature. Check your sub-questions, or widen the library, before relying on it."
+        )
+    lines.append(
+        f"- **Real text available for quoting:** {with_full_text} of {len(relevant)} paper(s) "
         f"(indexed by Part 2) — the rest have only an abstract, so claims about them are paraphrased, not quoted"
     )
     lines.append(f"- **Drafting mode:** {'Claude-written prose' if client else 'heuristic structured outline (no ANTHROPIC_API_KEY, or --no-llm)'}")

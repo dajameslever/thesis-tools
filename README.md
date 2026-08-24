@@ -509,6 +509,24 @@ It draws papers from Part 1's `<report>.papers.json` and/or Part 2's
 `--topic-cache`/`--library-index`), merges and de-duplicates them, then for
 each sub-question:
 
+**Papers that don't match your questions are ignored.** Each paper is scored
+against your research question *and* every sub-question, and kept if it
+matches **any** of them — so a paper that speaks only to one sub-question
+survives, which it didn't when scoring ran against the research question
+alone ("School start times and academic outcomes" scores 0.00 against "Does
+sleep deprivation affect adolescent decision-making?" and 0.67 against the
+sub-question it was indexed for). Everything below `--min-relevance`
+(default 0.1) is dropped before any drafting happens, and the draft's header
+says how many were ignored. In the rare case that *nothing* matches, the
+draft is written from everything rather than coming back empty — but says so
+loudly, in the header as well as on stderr, because that draft may be a
+review of the wrong literature.
+
+Beyond that filter, a paper only appears in a paragraph if it's classified
+as supporting, challenging, or giving mixed evidence on that specific
+sub-question — one classified "unrelated" is never cited, and the reference
+list only contains papers actually cited in the draft.
+
 - Gathers the papers that support, challenge, or give mixed evidence on it
   (reusing Part 1/2's stance analysis) — when a sub-question has more
   candidate papers than fit in one drafting call, **both sides of the
@@ -529,6 +547,16 @@ each sub-question:
   throwaway line noting a disagreement exists.
 - **Without Claude** (`--no-llm`, or no API key): a structured bullet outline
   grouped by stance instead of prose — still useful, just not narrative.
+
+**Classification isn't paid for twice.** Working out each paper's stance on
+each sub-question is the same job `visualize-library` already does, so Part
+3 reads and writes the same cache file (`stance_cache.json` next to your
+library index) and reuses anything still valid instead of re-running it. It
+also uses the cheap extraction tier (`claude-haiku-4-5`) for that
+classification rather than the drafting model — an explicit `--llm-model`
+still applies to both, and switching models correctly invalidates the cache
+rather than handing back what a cheaper model said earlier. Pass
+`--no-stance-cache` to force a fresh classification.
 - **In-text citations match whatever style you've configured** (`--style` —
   APA/Harvard: `(Smith, 2020)`; Chicago author-date: `(Smith 2020)`; MLA:
   `(Smith)`/`(Smith 15)`; IEEE: numbered `[3]`, assigned by order of first

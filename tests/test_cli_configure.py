@@ -228,3 +228,105 @@ def test_topic_finder_library_index_path_defaults_and_override(tmp_path, monkeyp
     # An explicit --library-index-path always wins over both.
     assert _run(["--library-index-path", "elsewhere/index.json"]) == 0
     assert captured["library_index_path"] == "elsewhere/index.json"
+
+
+def test_literature_review_defaults_stance_cache_next_to_the_library_index(tmp_path, monkeypatch):
+    """Part 3 reads the same cache visualize-library writes, so the stance
+    classification is not paid for twice."""
+    import json
+    from unittest.mock import patch
+
+    from thesis_tools.literature_review import LiteratureReviewInputs
+
+    monkeypatch.chdir(tmp_path)
+    project_file = tmp_path / "thesis_tools_project.json"
+    index_path = tmp_path / "library" / "index.json"
+    index_path.parent.mkdir()
+    index_path.write_text(
+        json.dumps({"version": 1, "entries": [{
+            "paper": {"title": "Sleep and decision-making", "authors": ["Jane Doe"], "year": 2020,
+                      "doi": "10.1/a", "abstract": "A significant effect of sleep on decision-making."},
+            "doi": "10.1/a", "confidence": "verified-doi", "file_path": "/x/a.pdf", "file_hash": "h",
+            "file_type": "pdf", "size_bytes": 1, "indexed_at": "2026-01-01T00:00:00", "references": [],
+        }]}),
+        encoding="utf-8",
+    )
+
+    captured = {}
+    real_run = None
+
+    def _capture(inputs):
+        captured["stance_cache_path"] = inputs.stance_cache_path
+        captured["extraction_llm_model"] = inputs.extraction_llm_model
+        return str(tmp_path / "review.md")
+
+    with patch("thesis_tools.cli.run_literature_review", side_effect=_capture):
+        rc = main([
+            "literature-review",
+            "--field", "Psychology",
+            "--title", "Sleep and decision-making",
+            "--question", "Does sleep affect decision-making?",
+            "--sub-questions", "Does sleep affect decision-making?",
+            "--library-index", str(index_path),
+            "--project-file", str(project_file),
+            "--non-interactive",
+        ])
+
+    assert rc == 0
+    assert captured["stance_cache_path"] == str(tmp_path / "library" / "stance_cache.json")
+    assert captured["extraction_llm_model"] == "claude-haiku-4-5"
+
+
+def test_literature_review_no_stance_cache_disables_reuse(tmp_path, monkeypatch):
+    from unittest.mock import patch
+
+    monkeypatch.chdir(tmp_path)
+    project_file = tmp_path / "thesis_tools_project.json"
+    cache_path = tmp_path / "report.md.papers.json"
+    cache_path.write_text('{"sources_used": [], "papers": [{"title": "A", "authors": [], "year": 2020}]}', encoding="utf-8")
+
+    captured = {}
+    with patch("thesis_tools.cli.run_literature_review", side_effect=lambda i: (captured.update(p=i.stance_cache_path), "x.md")[1]):
+        rc = main([
+            "literature-review",
+            "--field", "X", "--title", "Y",
+            "--sub-questions", "Does X happen?",
+            "--topic-cache", str(cache_path),
+            "--project-file", str(project_file),
+            "--no-stance-cache",
+            "--non-interactive",
+        ])
+
+    assert rc == 0
+    assert captured["p"] is None
+
+
+def test_literature_review_explicit_llm_model_applies_to_classification_too(tmp_path, monkeypatch):
+    from unittest.mock import patch
+
+    monkeypatch.chdir(tmp_path)
+    project_file = tmp_path / "thesis_tools_project.json"
+    cache_path = tmp_path / "report.md.papers.json"
+    cache_path.write_text('{"sources_used": [], "papers": [{"title": "A", "authors": [], "year": 2020}]}', encoding="utf-8")
+
+    captured = {}
+
+    def _capture(inputs):
+        captured["llm_model"] = inputs.llm_model
+        captured["extraction_llm_model"] = inputs.extraction_llm_model
+        return "x.md"
+
+    with patch("thesis_tools.cli.run_literature_review", side_effect=_capture):
+        rc = main([
+            "literature-review",
+            "--field", "X", "--title", "Y",
+            "--sub-questions", "Does X happen?",
+            "--topic-cache", str(cache_path),
+            "--project-file", str(project_file),
+            "--llm-model", "claude-opus-5",
+            "--non-interactive",
+        ])
+
+    assert rc == 0
+    assert captured["llm_model"] == "claude-opus-5"
+    assert captured["extraction_llm_model"] == "claude-opus-5"

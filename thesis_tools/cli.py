@@ -466,6 +466,20 @@ def _build_parser() -> argparse.ArgumentParser:
     lr.add_argument("--style", choices=STYLES, default=None, help="Citation style for the reference list (default: apa, or whatever Part 1 already used)")
     lr.add_argument("--no-llm", action="store_true", help="Skip Claude entirely and produce a heuristic structured outline instead of drafted prose")
     lr.add_argument("--llm-model", default=None, help="Model to use for drafting")
+    lr.add_argument(
+        "--stance-cache-path",
+        default=None,
+        help="Where to reuse/store each paper's Claude-classified stances (default: stance_cache.json "
+        "next to the library index — the same file visualize-library fills, so the classification is "
+        "not paid for twice)",
+    )
+    lr.add_argument(
+        "--no-stance-cache",
+        dest="use_stance_cache",
+        action="store_false",
+        help="Re-classify every paper with Claude, ignoring any cached result",
+    )
+    lr.set_defaults(use_stance_cache=True)
     lr.add_argument("--min-relevance", type=float, default=0.1, help="Drop papers scoring below this relevance to the research question (0-1, default: 0.1)")
     lr.add_argument("-o", "--output", dest="output_path", help="Where to write the Markdown draft (default: output/literature-review-<timestamp>.md)")
     lr.add_argument("--project-file", default=DEFAULT_PROJECT_PATH, help=f"Where shared project state lives (default: {DEFAULT_PROJECT_PATH})")
@@ -757,6 +771,21 @@ def _run_visualize_library_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def _stance_cache_for_sources(args: argparse.Namespace, project: ProjectState, use_llm: bool) -> Optional[str]:
+    """Where Part 3 reads/writes stance classifications — by default the same
+    file `visualize-library` already fills, sitting next to the library
+    index. Classifying a paper against the sub-questions is the same work in
+    both commands, so re-running it in Part 3 just pays twice for an answer
+    already on disk. --no-stance-cache opts out.
+    """
+    if not use_llm or not args.use_stance_cache:
+        return None
+    if args.stance_cache_path:
+        return args.stance_cache_path
+    index_path = args.library_index or project.last_library_index
+    return str(Path(index_path).parent / "stance_cache.json") if index_path else None
+
+
 def _run_literature_review_command(args: argparse.Namespace) -> int:
     project = ProjectState.load(args.project_file)
 
@@ -816,6 +845,12 @@ def _run_literature_review_command(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 2
+
+    # An explicit --llm-model applies to classification too, same as
+    # everywhere else; absent one, classification stays on the cheap tier.
+    if args.llm_model or project.llm_model:
+        inputs.extraction_llm_model = args.llm_model or project.llm_model
+    inputs.stance_cache_path = _stance_cache_for_sources(args, project, inputs.use_llm)
 
     try:
         report_path = run_literature_review(inputs)

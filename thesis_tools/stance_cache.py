@@ -61,20 +61,31 @@ class StanceCache:
         payload = {"version": CACHE_VERSION, "entries": self.entries}
         path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
 
-    def get(self, paper_key: str, paper_text_hash: str, q_hash: str) -> Optional[dict]:
+    def get(self, paper_key: str, paper_text_hash: str, q_hash: str, model: str) -> Optional[dict]:
         """The cached {question: {"stance", "rationale"}} dict for this
-        paper, or None if there's no entry or it's stale against either
-        hash."""
+        paper, or None if there's no entry or it's stale against the paper's
+        text, the question set, or the model that produced it.
+
+        The model is part of the key so that deliberately asking for a
+        stronger one (--llm-model) actually re-classifies, instead of
+        silently handing back an answer a cheaper model gave earlier. Cache
+        files written before this was tracked simply miss once and refill.
+        """
         entry = self.entries.get(paper_key)
         if not entry:
             return None
-        if entry.get("text_hash") != paper_text_hash or entry.get("questions_hash") != q_hash:
+        if (
+            entry.get("text_hash") != paper_text_hash
+            or entry.get("questions_hash") != q_hash
+            or entry.get("model") != model
+        ):
             return None
         return entry.get("stances")
 
-    def put(self, paper_key: str, paper_text_hash: str, q_hash: str, stances: Dict[str, dict]) -> None:
+    def put(self, paper_key: str, paper_text_hash: str, q_hash: str, model: str, stances: Dict[str, dict]) -> None:
         self.entries[paper_key] = {
             "text_hash": paper_text_hash,
             "questions_hash": q_hash,
+            "model": model,
             "stances": stances,
         }

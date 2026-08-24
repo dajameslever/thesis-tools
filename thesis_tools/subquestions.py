@@ -260,7 +260,7 @@ def analyze_subquestions(
         paper_text_hash = text_hash(text) if (cache is not None and text) else None
 
         if client is not None and cache is not None and paper_text_hash:
-            cached = cache.get(paper.key(), paper_text_hash, q_hash)
+            cached = cache.get(paper.key(), paper_text_hash, q_hash, model)
             if cached is not None:
                 stances = {q: StanceResult(**v) for q, v in cached.items()}
                 cache_hits += 1
@@ -274,6 +274,7 @@ def analyze_subquestions(
                     paper.key(),
                     paper_text_hash,
                     q_hash,
+                    model,
                     {q: {"stance": r.stance, "rationale": r.rationale} for q, r in stances.items()},
                 )
                 cache_dirty = True
