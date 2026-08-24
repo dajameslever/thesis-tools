@@ -212,6 +212,20 @@ def _lastname(full_name: str) -> str:
     return _split_name(full_name)[1] or "n.a."
 
 
+def reference_sort_key(paper: Paper) -> tuple:
+    """Sort key for an alphabetical reference list.
+
+    Every author-date style here (APA, MLA, Chicago, Harvard) orders the
+    bibliography by the first author's SURNAME. Names are stored
+    "Given Family", so sorting on the raw author string orders by first
+    name — putting "Ada Lovelace" before "Grace Hopper". Falls back to the
+    title for a paper with no authors, which is also the convention.
+    """
+    if paper.authors and paper.authors[0]:
+        return (0, _lastname(paper.authors[0]).lower(), str(paper.year or ""))
+    return (1, (paper.title or "").lower(), "")
+
+
 def _author_group_for_in_text(paper: Paper) -> str:
     """'Smith', 'Smith & Jones', or 'Smith et al.' — the shared author-
     grouping convention every parenthetical (non-IEEE) style below uses,

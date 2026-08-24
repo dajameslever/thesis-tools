@@ -668,6 +668,48 @@ itself and sub-questions with no coverage at all (i.e. candidate
 contributions for your thesis) — and a reference list containing only the
 papers actually cited in the draft.
 
+### The second output: an executive summary
+
+Every run writes a second pair of files alongside the draft —
+`<draft>.exec-summary.md` and `.html`. Same evidence, organised for someone
+who will not read the review: a supervisor, a panel, or you deciding where
+the contribution is. It is built from the sections the review just wrote, so
+it can never claim something the review does not say, and it reuses the same
+in-text citation markers, so the two documents line up.
+
+It follows the structure consulting practice uses for an executive summary,
+adapted to literature rather than to a business case:
+
+- **The short version** — Situation, Complication, Question, Answer, in four
+  sentences. The Answer is the headline: a reader who stops there still
+  knows what the literature concludes.
+- **What the evidence shows** — two to five findings that cut *across* the
+  sub-questions rather than restating each section in turn. Each is a
+  headline assertion used as its own heading, so reading only the headings
+  gives the whole argument, and each is tagged **[Evidence]** (sources agree
+  and none contradicts), **[Contested]** (sources disagree) or **[Gap]**
+  (pointed toward but not tested). The consulting version of this tag is
+  Evidence / Assumption / Gap; in a review the interesting middle case is
+  not an untested assumption but a genuine disagreement between published
+  studies.
+- **Where the literature disagrees** — the debate stated as a debate: who
+  claims what, and what would settle it. If nothing in your sources conflicts
+  anywhere, it says so and treats that as a finding — an evidence base with
+  no disagreement in it is either immature or narrowly selected.
+- **Worth calling out** — what a careful reader would want flagged and would
+  otherwise miss: a result cutting against the set, a claim resting on one
+  source, evidence concentrated in one country or period, a term defined
+  inconsistently between papers, a finding that has aged badly.
+- **What this means for the thesis** — concrete next actions, each following
+  from something above it.
+
+Length scales with the sources actually cited (500–1,400 words);
+`--exec-summary-words` forces a target, `--exec-summary-output` moves the
+file, and `--no-exec-summary` skips it. If the request to Claude fails, what
+gets written is a labelled skeleton — the same rule the review itself
+follows: a document nobody wrote is never shipped under a title that implies
+somebody did.
+
 > ⚠️ **This is a draft, not a citable final product.** Claims about papers
 > Part 2 indexed locally draw on real extracted text; claims about papers
 > found only via Part 1's search draw on the abstract only. Either way,

@@ -38,6 +38,21 @@ def _slug(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")[:60] or "section"
 
 
+_STRENGTH_TAG_RE = re.compile(r"\s*\[(Evidence|Contested|Gap)\]\s*$", re.IGNORECASE)
+
+
+def _split_strength_tag(title: str) -> Tuple[str, str]:
+    """Split a trailing [Evidence]/[Contested]/[Gap] off a heading, returning
+    (heading without it, chip HTML). Any other heading comes back unchanged,
+    so this is inert on the review's own headings."""
+    match = _STRENGTH_TAG_RE.search(title)
+    if not match:
+        return title, ""
+    kind = match.group(1).lower()
+    label = match.group(1).capitalize()
+    return title[: match.start()].rstrip(), f'<span class="lr-tag lr-tag-{kind}">{label}</span>'
+
+
 def markdown_to_html(markdown: str) -> Tuple[str, List[Tuple[str, str]]]:
     """Convert the subset of Markdown the drafter emits — headings,
     paragraphs, blockquotes, bullet lists and inline emphasis — into HTML.
@@ -88,10 +103,16 @@ def markdown_to_html(markdown: str) -> Tuple[str, List[Tuple[str, str]]]:
             if level == 1:
                 html_parts.append(f"<h1>{_inline(title)}</h1>")
             else:
+                # The executive summary tags each finding with the strength
+                # of what stands behind it. Left as literal text the tag
+                # wraps onto its own line and reads like part of the
+                # sentence, so it is lifted out of the heading and rendered
+                # as a chip — the same words, visibly a label.
+                title, tag_html = _split_strength_tag(title)
                 anchor = _slug(title)
                 if level == 2:
                     toc.append((anchor, title))
-                html_parts.append(f'<h{level} id="{anchor}">{_inline(title)}</h{level}>')
+                html_parts.append(f'<h{level} id="{anchor}">{_inline(title)}{tag_html}</h{level}>')
             continue
 
         if line.startswith(">"):
@@ -126,6 +147,12 @@ _CSS = """
   --lr-accent: #2a78d6;
   --lr-callout: rgba(250,178,25,0.12);
   --lr-callout-edge: #fab219;
+  --lr-tag-evidence-bg: rgba(42,120,214,0.12);
+  --lr-tag-evidence-fg: #1c5599;
+  --lr-tag-contested-bg: rgba(212,74,58,0.12);
+  --lr-tag-contested-fg: #9e3527;
+  --lr-tag-gap-bg: rgba(11,11,11,0.07);
+  --lr-tag-gap-fg: #52514e;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
@@ -139,6 +166,12 @@ _CSS = """
     --lr-accent: #3987e5;
     --lr-callout: rgba(250,178,25,0.14);
     --lr-callout-edge: #fab219;
+    --lr-tag-evidence-bg: rgba(57,135,229,0.20);
+    --lr-tag-evidence-fg: #9cc6f5;
+    --lr-tag-contested-bg: rgba(232,106,90,0.20);
+    --lr-tag-contested-fg: #f2a89c;
+    --lr-tag-gap-bg: rgba(255,255,255,0.09);
+    --lr-tag-gap-fg: #c3c2b7;
   }
 }
 :root[data-theme="dark"] {
@@ -152,6 +185,12 @@ _CSS = """
   --lr-accent: #3987e5;
   --lr-callout: rgba(250,178,25,0.14);
   --lr-callout-edge: #fab219;
+  --lr-tag-evidence-bg: rgba(57,135,229,0.20);
+  --lr-tag-evidence-fg: #9cc6f5;
+  --lr-tag-contested-bg: rgba(232,106,90,0.20);
+  --lr-tag-contested-fg: #f2a89c;
+  --lr-tag-gap-bg: rgba(255,255,255,0.09);
+  --lr-tag-gap-fg: #c3c2b7;
 }
 * { box-sizing: border-box; }
 body {
@@ -178,6 +217,10 @@ body {
 h1 { font-size: 1.75rem; line-height: 1.25; margin: 0 0 8px; }
 h2 { font-size: 1.2rem; line-height: 1.35; margin: 44px 0 12px; padding-top: 20px; border-top: 1px solid var(--lr-border); }
 h3 { font-size: 1rem; margin: 28px 0 8px; }
+.lr-tag { display: inline-block; margin-left: 8px; padding: 1px 8px; border-radius: 999px; font-size: 0.68rem; font-weight: 600; letter-spacing: 0.03em; text-transform: uppercase; vertical-align: 2px; white-space: nowrap; }
+.lr-tag-evidence { background: var(--lr-tag-evidence-bg); color: var(--lr-tag-evidence-fg); }
+.lr-tag-contested { background: var(--lr-tag-contested-bg); color: var(--lr-tag-contested-fg); }
+.lr-tag-gap { background: var(--lr-tag-gap-bg); color: var(--lr-tag-gap-fg); }
 p { margin: 0 0 16px; }
 ul { margin: 0 0 16px; padding-left: 22px; }
 li { margin-bottom: 8px; }

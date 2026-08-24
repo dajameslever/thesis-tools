@@ -1,0 +1,357 @@
+"""Part 3's second output: a McKinsey-style executive summary of the
+literature, written from the sections the review just drafted.
+
+The literature review answers each sub-question in turn. That is the right
+shape for a thesis chapter and the wrong shape for anyone who needs to know
+what the literature *says* in five minutes — a supervisor, a panel, or the
+student themselves deciding where the contribution is. This module produces
+the other document: answer first, themes across the questions rather than
+one section per question, and the disagreements stated as disagreements
+instead of averaged away.
+
+Structure follows the Pyramid Principle as consulting practice uses it:
+
+  * SCQA opening — Situation, Complication, Question, Answer — where the
+    Answer IS the headline. A reader who stops after four sentences still
+    knows what the literature concludes.
+  * 2-5 key lines, each a complete assertion used as its own heading, so
+    reading only the headings gives the whole argument. "Trust mediates
+    adoption more strongly than perceived accuracy" is a key line;
+    "Trust" is not.
+  * Every key line tagged for the strength of what stands behind it. The
+    consulting version tags Evidence / Assumption / Gap; the literature
+    version tags [Evidence] / [Contested] / [Gap], because in a review the
+    interesting middle case is not an untested assumption but a genuine
+    disagreement between published studies.
+  * A "so what" for the thesis at the end, as concrete next actions.
+
+Every claim carries the same in-text citation markers the review already
+handed out, so the two documents cite identically and the summary stands
+on its own.
+"""
+
+from __future__ import annotations
+
+import re
+from typing import Dict, List, Optional, Tuple
+
+from . import llm
+from .citations import format_citation, reference_sort_key
+from .sources.base import Paper
+
+# The summary is written from the drafted sections, which are already
+# condensed prose rather than raw papers — so this prompt is far smaller
+# than the synthesis prompts, but a long review can still run past a
+# sensible request size. Sections are trimmed evenly if the total exceeds
+# this, and the summary says so rather than hiding it.
+MAX_SECTION_CHARS = 120_000
+
+# Scales with the evidence behind it, on the same principle as the review's
+# own sections: a summary of four papers that runs to 1,400 words is padding.
+WORDS_PER_SOURCE = 80
+MIN_WORDS = 500
+MAX_WORDS = 1400
+
+
+def target_words_for(source_count: int) -> int:
+    return max(MIN_WORDS, min(WORDS_PER_SOURCE * source_count, MAX_WORDS))
+
+
+_SYSTEM_PROMPT = (
+    "You write the EXECUTIVE SUMMARY of a literature review, for a reader who will not read the "
+    "review itself. Work only from the drafted sections given to you — every claim must already be "
+    "present in them. Invent no findings, no papers, and no citations.\n"
+    "\n"
+    "Structure, exactly, using these Markdown headings:\n"
+    "\n"
+    "## The short version\n"
+    "Four sentences, each on its own line, labelled in bold: **Situation:** the settled context this "
+    "literature takes for granted. **Complication:** what has changed, or what the literature cannot "
+    "agree on, that makes the review worth reading. **Question:** the single question the review "
+    "answers. **Answer:** what the literature as a whole indicates — stated plainly, as a claim "
+    "someone could disagree with. The Answer is the headline of the whole document; a reader who "
+    "stops here must still know what the literature concludes.\n"
+    "\n"
+    "## What the evidence shows\n"
+    "Between two and five findings that cut ACROSS the sub-questions — themes, not a restatement of "
+    "each section in turn. Two papers reaching the same conclusion by different routes is a theme; "
+    "'Section 3 discussed X' is not. Each finding is a `### ` heading that states the finding as a "
+    "complete assertion, so that reading only the headings gives the whole argument. End each "
+    "heading with one tag in square brackets:\n"
+    "  [Evidence] — several sources agree and none in the set contradicts it.\n"
+    "  [Contested] — sources in the set disagree; say so in the heading itself.\n"
+    "  [Gap] — the sources point toward it but none tests it directly.\n"
+    "Under each heading, one short paragraph of support, citing the specific papers.\n"
+    "\n"
+    "## Where the literature disagrees\n"
+    "The debate, stated as a debate. For each disagreement: what one side claims and who claims it, "
+    "what the other side claims and who claims it, and what would settle it — a population, a "
+    "measure, a method, a time period. Name the papers on each side. If the sources genuinely do "
+    "not conflict anywhere, say that plainly and treat it as a finding in itself: an evidence base "
+    "with no disagreement in it is either immature or narrowly selected, and the reader should be "
+    "told which you think it is.\n"
+    "\n"
+    "## Worth calling out\n"
+    "Two to five things a careful reader would want flagged and would otherwise miss. Real "
+    "candidates: a result that cuts against the rest of the set; an unusually strong or unusually "
+    "weak study design carrying more weight than it should; a claim that rests on a single source; "
+    "a concentration of the evidence in one country, sector, period or population; a definition "
+    "used inconsistently between papers; a finding that has aged badly. Be specific and cite. Do "
+    "not pad this section to reach a count — three sharp callouts beat five obvious ones.\n"
+    "\n"
+    "## What this means for the thesis\n"
+    "Three to six concrete next actions, each one line, verb first: the search to run, the gap to "
+    "target, the disagreement to adjudicate, the method that would settle something. Each says what "
+    "it would establish. No generic advice ('read more widely') — every action must follow from "
+    "something above it.\n"
+    "\n"
+    "Rules:\n"
+    "- CITE EVERY CLAIM using the exact in-text citation markers as they already appear in the "
+    "drafted sections — copy them character for character. Never invent a marker, a year, or an "
+    "author name, and never cite a paper that is not in the sections given.\n"
+    "- Paraphrase. Do not quote the sections back; this is a summary, not an extract.\n"
+    "- No hedging as a substitute for a position. Where the evidence supports a claim, state it; "
+    "where it does not, say what is missing. 'More research is needed' on its own is not a finding.\n"
+    "- No bullet-point dumps of paper titles anywhere.\n"
+    "\n" + llm.ACADEMIC_STYLE_NOTE
+)
+
+
+# Markdown joins consecutive lines into one paragraph, so an SCQA written
+# as four lines renders as a single block of text — exactly the wall the
+# opening is supposed to save the reader from. The labels are separated into
+# their own paragraphs here rather than only being asked for in the prompt,
+# because this is the one block of the document that has to land.
+_SCQA_LABELS = ("**Complication:**", "**Question:**", "**Answer:**")
+
+
+def _space_out_scqa(text: str) -> str:
+    for label in _SCQA_LABELS:
+        # Collapse whatever whitespace precedes the label — nothing, a single
+        # newline, or an existing blank line — to exactly one blank line, so
+        # the result is the same however the model chose to lay it out.
+        text = re.sub(rf"\s*{re.escape(label)}", f"\n\n{label}", text)
+    return text.lstrip("\n")
+
+
+def _fit_sections(sections: List[Tuple[str, str]], budget: int = MAX_SECTION_CHARS) -> Tuple[List[Tuple[str, str]], int]:
+    """Trim section texts to fit `budget` total characters, sharing it evenly
+    and letting short sections donate what they don't use — the same
+    approach the synthesis prompt uses for paper texts, and for the same
+    reason: dropping a whole sub-question silently is worse than shortening
+    several. Returns (fitted, number trimmed)."""
+    total = sum(len(text) for _, text in sections)
+    if total <= budget or not sections:
+        return sections, 0
+
+    share = budget // len(sections)
+    spare = sum(share - len(text) for _, text in sections if len(text) < share)
+    over = [i for i, (_, text) in enumerate(sections) if len(text) > share]
+    bonus = spare // len(over) if over else 0
+
+    fitted: List[Tuple[str, str]] = []
+    trimmed = 0
+    for question, text in sections:
+        allowance = share + bonus if len(text) > share else share
+        if len(text) > allowance:
+            fitted.append((question, text[:allowance].rstrip()))
+            trimmed += 1
+        else:
+            fitted.append((question, text))
+    return fitted, trimmed
+
+
+def _evidence_base_note(paper_count: int, cited_count: int, tensions: List[str], no_coverage: List[str]) -> str:
+    parts = [
+        f"Written from {cited_count} paper(s) cited across {paper_count} judged relevant to the "
+        "research question."
+    ]
+    if tensions:
+        parts.append(f"{len(tensions)} sub-question(s) show disagreement between sources.")
+    if no_coverage:
+        parts.append(f"{len(no_coverage)} sub-question(s) have no supporting literature at all.")
+    return " ".join(parts)
+
+
+def build_exec_summary(
+    *,
+    research_question: str,
+    field: str,
+    sections: List[Tuple[str, str]],
+    tensions: List[str],
+    no_coverage: List[str],
+    cited_papers: List[Paper],
+    markers_by_key: Dict[str, str],
+    style: str,
+    client,
+    model: str,
+    relevant_paper_count: int,
+    words: Optional[int] = None,
+    cache: bool = True,
+    usage_totals: Optional[Dict[str, int]] = None,
+) -> Tuple[str, Optional[str]]:
+    """Returns (markdown, failure reason).
+
+    The failure reason matters for the same reason it does in the review: the
+    fallback is a skeleton, not a summary, and shipping it silently under the
+    same title would misrepresent it.
+    """
+    written = [(q, t) for q, t in sections if t.strip()]
+    if not written:
+        return (
+            "_No sections were drafted, so there is nothing to summarize._",
+            "the review produced no sections",
+        )
+
+    target = words or target_words_for(len(cited_papers))
+    failure: Optional[str] = None
+
+    if client is not None:
+        fitted, trimmed = _fit_sections(written)
+        blocks = [f"### Sub-question: {q}\n{text}" for q, text in fitted]
+        context = [
+            f"Field: {field}",
+            f"Research question: {research_question}",
+            _evidence_base_note(relevant_paper_count, len(cited_papers), tensions, no_coverage),
+        ]
+        if tensions:
+            context.append("Sub-questions where the sources disagree:\n" + "\n".join(f"- {q}" for q in tensions))
+        if no_coverage:
+            context.append("Sub-questions with no supporting literature:\n" + "\n".join(f"- {q}" for q in no_coverage))
+        # Sections first so the bulk of the prompt sits in front of the cache
+        # breakpoint; the instruction, which carries the varying word target,
+        # goes after it. Same reasoning as the synthesis call.
+        user_message = "\n\n".join(context) + "\n\nDrafted sections:\n\n" + "\n\n".join(blocks)
+        instruction = (
+            f"Write the executive summary of the review above, aiming for about {target} words."
+        )
+        errors: List[str] = []
+        result = llm.ask(
+            client,
+            _SYSTEM_PROMPT,
+            user_message,
+            model=model,
+            max_tokens=max(int(target * 2.5), 1500),
+            errors=errors,
+            cache=cache,
+            cache_suffix=instruction,
+            usage_totals=usage_totals,
+        )
+        if result:
+            if trimmed:
+                result += (
+                    f"\n\n_Note: {trimmed} of the {len(written)} drafted section(s) were too long to "
+                    "send in full, so this summary was written from as much of each as would fit._"
+                )
+            return _with_references(_space_out_scqa(result), cited_papers, markers_by_key, style), None
+        failure = errors[0] if errors else "the request returned nothing"
+
+    return _fallback_summary(
+        research_question, written, tensions, no_coverage, cited_papers, markers_by_key, style
+    ), failure
+
+
+def _cites(text: str, paper: Paper, marker: str, style: str) -> bool:
+    """Whether this summary actually cites this paper.
+
+    The exact marker is checked first, but it is not sufficient: prose
+    routinely merges two citations into one bracket — "(Hopper, 2025;
+    Turing, 2025)" contains neither "(Hopper, 2025)" nor "(Turing, 2025)" as
+    a substring — and IEEE runs collapse to "[3], [4]" or "[3]-[5]". So the
+    fallback looks for the paper's own signature instead of its punctuation:
+    first-author surname close to the year, or the bare number for IEEE.
+    """
+    if marker and marker in text:
+        return True
+    if style.lower() == "ieee":
+        number = _ieee_number(marker)
+        return bool(number) and re.search(rf"\[\s*{number}\s*[\],-]", text) is not None
+    surname = paper.authors[0].split()[-1] if paper.authors and paper.authors[0].split() else ""
+    if not surname:
+        return False
+    if paper.year:
+        # Anything between the two is an "et al." or a page number, not the
+        # start of a different citation — hence no closing bracket allowed.
+        return re.search(rf"{re.escape(surname)}[^)\]]{{0,30}}{re.escape(str(paper.year))}", text) is not None
+    return surname in text
+
+
+def _with_references(text: str, cited_papers: List[Paper], markers_by_key: Dict[str, str], style: str) -> str:
+    """Append a reference list covering only the papers this summary actually
+    cites, so it stands on its own without carrying the review's full list.
+    Membership is decided by looking for each paper in the text (see _cites)
+    rather than by assuming every paper the review cited made it in."""
+    used = [p for p in cited_papers if _cites(text, p, markers_by_key.get(p.key(), ""), style)]
+    if not used:
+        return text
+
+    if style.lower() == "ieee":
+        used.sort(key=lambda p: _ieee_number(markers_by_key.get(p.key(), "")))
+    else:
+        used.sort(key=reference_sort_key)
+
+    lines = [text, "", "## Sources cited in this summary", ""]
+    for i, paper in enumerate(used, start=1):
+        ref_number = _ieee_number(markers_by_key.get(paper.key(), "")) or i
+        lines.append(format_citation(paper, style, ref_number=ref_number))
+        lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+_IEEE_NUMBER_RE = re.compile(r"\[(\d+)\]")
+
+
+def _ieee_number(marker: str) -> int:
+    match = _IEEE_NUMBER_RE.search(marker or "")
+    return int(match.group(1)) if match else 0
+
+
+def _fallback_summary(
+    research_question: str,
+    sections: List[Tuple[str, str]],
+    tensions: List[str],
+    no_coverage: List[str],
+    cited_papers: List[Paper],
+    markers_by_key: Dict[str, str],
+    style: str,
+) -> str:
+    """A skeleton assembled from what is already known without asking Claude:
+    which sub-questions have support, which are contested, which have none.
+    It is deliberately not written as prose — an executive summary that
+    nobody wrote is a form to fill in, and presenting it as anything more
+    would be the same failure the review's own fallback guards against."""
+    covered = [q for q, _ in sections if q not in no_coverage]
+    lines = [
+        "## The short version",
+        "",
+        f"**Situation:** {len(cited_papers)} source(s) were reviewed against the question "
+        f"\"{research_question}\".",
+        f"**Complication:** {len(tensions)} sub-question(s) are contested between sources and "
+        f"{len(no_coverage)} have no supporting literature at all.",
+        f"**Question:** {research_question}",
+        "**Answer:** _Not written — this skeleton lists what the review found without interpreting "
+        "it. Re-run with Claude available for the written summary._",
+        "",
+        "## What the evidence shows",
+        "",
+    ]
+    if covered:
+        lines.append("_Sub-questions with supporting literature, to be turned into cross-cutting findings:_")
+        lines.extend(f"- {q}" for q in covered)
+    else:
+        lines.append("_No sub-question in this review has supporting literature._")
+    lines += ["", "## Where the literature disagrees", ""]
+    if tensions:
+        lines.extend(f"- {q}" for q in tensions)
+    else:
+        lines.append(
+            "_No sub-question shows sources disagreeing with each other. Worth checking whether the "
+            "evidence base is genuinely settled or simply one-sided._"
+        )
+    lines += ["", "## What this means for the thesis", ""]
+    if no_coverage:
+        lines.append("_Gaps with no literature found — the most direct route to an original contribution:_")
+        lines.extend(f"- {q}" for q in no_coverage)
+    else:
+        lines.append("- Every sub-question has at least one source; look to the contested ones for a contribution.")
+    return "\n".join(lines)

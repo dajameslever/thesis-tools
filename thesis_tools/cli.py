@@ -501,6 +501,27 @@ def _build_parser() -> argparse.ArgumentParser:
     lr.add_argument("--no-html", dest="write_html", action="store_false", help="Write only the Markdown draft, no HTML version")
     lr.set_defaults(write_html=True)
     lr.add_argument(
+        "--exec-summary-output",
+        dest="exec_summary_path",
+        default=None,
+        help="Where to write the executive summary (default: alongside the draft, as <draft>.exec-summary.md)",
+    )
+    lr.add_argument(
+        "--exec-summary-words",
+        type=int,
+        default=None,
+        help="Force a target length on the executive summary. By default it scales with the number "
+        "of sources actually cited",
+    )
+    lr.add_argument(
+        "--no-exec-summary",
+        dest="write_exec_summary",
+        action="store_false",
+        help="Write only the review, skipping the companion executive summary — the answer-first "
+        "version of the same evidence, organised by theme rather than by sub-question",
+    )
+    lr.set_defaults(write_exec_summary=True)
+    lr.add_argument(
         "--no-prompt-cache",
         dest="use_prompt_cache",
         action="store_false",
@@ -883,6 +904,9 @@ def _run_literature_review_command(args: argparse.Namespace) -> int:
         inputs.words_per_question = args.words_per_question
     inputs.allow_quotes = args.allow_quotes
     inputs.use_prompt_cache = args.use_prompt_cache
+    inputs.write_exec_summary = args.write_exec_summary
+    inputs.exec_summary_path = args.exec_summary_path
+    inputs.exec_summary_words = args.exec_summary_words
     inputs.write_html = args.write_html
     inputs.html_output_path = args.html_output_path
 

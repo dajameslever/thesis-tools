@@ -1009,3 +1009,124 @@ def test_run_reports_what_the_drafting_calls_actually_cost(mock_ask, mock_get_cl
     err = capsys.readouterr().err
     assert "cache-read" in err
     assert "nothing was read from the prompt cache" not in err
+
+
+_EXEC_MARKER = "You write the EXECUTIVE SUMMARY"
+
+
+def _ask_for_review(exec_text="## The short version\n\n**Answer:** Trust gates adoption (Doe, 2020)."):
+    def _ask(client, system, user, model=None, max_tokens=300, errors=None, **kwargs):
+        if _STANCE_MARKER in system:
+            return "1: supports - confirms it.\n2: challenges - contradicts it."
+        if _EXEC_MARKER in system:
+            return exec_text
+        if _SYNTHESIS_MARKER in system:
+            return "A written section citing (Doe, 2020)."
+        return "Some prose."
+
+    return _ask
+
+
+@patch("thesis_tools.llm.get_client")
+@patch("thesis_tools.llm.ask")
+def test_executive_summary_is_written_alongside_the_review(mock_ask, mock_get_client, tmp_path):
+    mock_get_client.return_value = object()
+    mock_ask.side_effect = _ask_for_review()
+
+    run_literature_review(_review_inputs(tmp_path, _two_sided_source(tmp_path)))
+
+    summary = tmp_path / "review.exec-summary.md"
+    assert summary.exists()
+    text = summary.read_text()
+    assert text.startswith("# Executive Summary —")
+    assert "Companion to `review.md`" in text
+    assert "## The short version" in text
+    assert (tmp_path / "review.exec-summary.html").exists()
+
+
+@patch("thesis_tools.llm.get_client")
+@patch("thesis_tools.llm.ask")
+def test_executive_summary_is_built_from_the_drafted_sections(mock_ask, mock_get_client, tmp_path):
+    """It must summarize what the review actually says, so it can never claim
+    something the review does not."""
+    mock_get_client.return_value = object()
+    mock_ask.side_effect = _ask_for_review()
+
+    inputs = _review_inputs(tmp_path, _two_sided_source(tmp_path))
+    inputs.sub_questions = ["Does digital transformation reduce environmental impact?", "What limits the effect?"]
+    run_literature_review(inputs)
+
+    user_message = _calls_matching(mock_ask, _EXEC_MARKER)[0].args[2]
+    assert user_message.count("A written section citing (Doe, 2020).") == 2
+    assert "What limits the effect?" in user_message
+
+
+@patch("thesis_tools.llm.get_client")
+@patch("thesis_tools.llm.ask")
+def test_a_failed_summary_is_labelled_a_skeleton(mock_ask, mock_get_client, tmp_path):
+    mock_get_client.return_value = object()
+
+    def _ask(client, system, user, model=None, max_tokens=300, errors=None, **kwargs):
+        if _EXEC_MARKER in system:
+            if errors is not None:
+                errors.append("BadRequestError: prompt is too long")
+            return None
+        if _STANCE_MARKER in system:
+            return "1: supports - confirms it."
+        return "A written section."
+
+    mock_ask.side_effect = _ask
+    run_literature_review(_review_inputs(tmp_path, _two_sided_source(tmp_path)))
+
+    text = (tmp_path / "review.exec-summary.md").read_text()
+    assert "skeleton, not a written summary" in text
+    assert "BadRequestError: prompt is too long" in text
+
+
+@patch("thesis_tools.llm.get_client")
+@patch("thesis_tools.llm.ask")
+def test_no_exec_summary_skips_it_entirely(mock_ask, mock_get_client, tmp_path):
+    mock_get_client.return_value = object()
+    mock_ask.side_effect = _ask_for_review()
+
+    run_literature_review(_review_inputs(tmp_path, _two_sided_source(tmp_path), write_exec_summary=False))
+
+    assert not (tmp_path / "review.exec-summary.md").exists()
+    assert not _calls_matching(mock_ask, _EXEC_MARKER)
+    assert (tmp_path / "review.md").exists()
+
+
+@patch("thesis_tools.llm.get_client")
+@patch("thesis_tools.llm.ask")
+def test_exec_summary_path_and_length_can_be_forced(mock_ask, mock_get_client, tmp_path):
+    mock_get_client.return_value = object()
+    mock_ask.side_effect = _ask_for_review()
+
+    run_literature_review(
+        _review_inputs(
+            tmp_path,
+            _two_sided_source(tmp_path),
+            exec_summary_path=str(tmp_path / "summary" / "brief.md"),
+            exec_summary_words=650,
+        )
+    )
+
+    assert (tmp_path / "summary" / "brief.md").exists()
+    assert (tmp_path / "summary" / "brief.html").exists()
+    assert "about 650 words" in _calls_matching(mock_ask, _EXEC_MARKER)[0].kwargs["cache_suffix"]
+
+
+@patch("thesis_tools.llm.get_client")
+@patch("thesis_tools.llm.ask")
+def test_exec_summary_reuses_the_reviews_citation_markers(mock_ask, mock_get_client, tmp_path):
+    """Both documents must cite the same paper the same way, or a reader
+    moving between them cannot line them up."""
+    mock_get_client.return_value = object()
+    mock_ask.side_effect = _ask_for_review()
+
+    run_literature_review(_review_inputs(tmp_path, _two_sided_source(tmp_path), style="ieee"))
+
+    markers = _calls_matching(mock_ask, _SYNTHESIS_MARKER)[0].args[2]
+    assert "Cite this paper in-text using exactly: [1]." in markers
+    summary_input = _calls_matching(mock_ask, _EXEC_MARKER)[0].args[2]
+    assert "A written section citing (Doe, 2020)." in summary_input

@@ -25,11 +25,12 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from . import llm
-from .citations import STYLES, format_citation, in_text_citation
+from .citations import STYLES, format_citation, in_text_citation, reference_sort_key
 from .dedupe import dedupe_papers
+from .exec_summary import build_exec_summary
 from .relevance import score_relevance, tokenize
-from .sources.base import Paper
 from .review_html import render_review_html
+from .sources.base import Paper
 from .subquestions import SubquestionAnalysis, analyze_subquestions
 
 DISCLAIMER = (
@@ -109,6 +110,14 @@ class LiteratureReviewInputs:
     # styled for reading in a browser rather than in a text editor.
     html_output_path: Optional[str] = None
     write_html: bool = True
+    # The companion executive summary: the same evidence organised for a
+    # reader who will not read the review — answer first, themes across the
+    # sub-questions rather than one section each, disagreements stated as
+    # disagreements. Written as .md and .html beside the draft.
+    write_exec_summary: bool = True
+    exec_summary_path: Optional[str] = None
+    # None scales it to the number of sources cited; a number forces it.
+    exec_summary_words: Optional[int] = None
 
 
 def _load_papers_from_source(path: str) -> List[Paper]:
@@ -674,6 +683,11 @@ def run_literature_review(inputs: LiteratureReviewInputs) -> str:
     # reused to number the reference list the same way.
     ref_number_by_key: Dict[str, int] = {}
 
+    # Kept as (question, text) as well as appended to `lines`, so the
+    # executive summary can be written from the sections themselves rather
+    # than by re-reading the assembled Markdown back out of the file.
+    drafted_sections: List[Tuple[str, str]] = []
+
     for i, question in enumerate(inputs.sub_questions, start=1):
         grouped = analysis.grouped_papers(question, relevant)
         lines.append(f"## {i}. {question}")
@@ -681,6 +695,7 @@ def run_literature_review(inputs: LiteratureReviewInputs) -> str:
         section, cited, failure = _draft_synthesis_section(
             question, grouped, inputs, client, ref_number_by_key, usage_totals
         )
+        drafted_sections.append((question, section))
         if failure:
             degraded.append((question, failure))
             lines.append(
@@ -710,7 +725,7 @@ def run_literature_review(inputs: LiteratureReviewInputs) -> str:
         # out), not alphabetical — the IEEE convention.
         cited_list = sorted(cited_papers_by_key.values(), key=lambda p: ref_number_by_key.get(p.key(), 10**9))
     else:
-        cited_list = sorted(cited_papers_by_key.values(), key=lambda p: (p.authors[0] if p.authors else p.title))
+        cited_list = sorted(cited_papers_by_key.values(), key=reference_sort_key)
     if not cited_list:
         lines.append("_No papers were cited in the drafted sections above._")
     for i, paper in enumerate(cited_list, start=1):
@@ -751,6 +766,61 @@ def run_literature_review(inputs: LiteratureReviewInputs) -> str:
         html_path.parent.mkdir(parents=True, exist_ok=True)
         html_path.write_text(render_review_html(report_text), encoding="utf-8")
         print(f"HTML version: {html_path}", file=sys.stderr)
+
+    if inputs.write_exec_summary:
+        # Built from the drafted sections, so the summary can never claim
+        # something the review itself does not say — and using the same
+        # citation markers, so the two documents cite identically.
+        markers_by_key = {
+            key: _citation_marker_for(paper, inputs.style, ref_number_by_key)
+            for key, paper in cited_papers_by_key.items()
+        }
+        summary_md, summary_failure = build_exec_summary(
+            research_question=inputs.research_question or inputs.working_title,
+            field=inputs.field,
+            sections=drafted_sections,
+            tensions=analysis.tensions(),
+            no_coverage=no_coverage,
+            cited_papers=list(cited_papers_by_key.values()),
+            markers_by_key=markers_by_key,
+            style=inputs.style,
+            client=client,
+            model=inputs.llm_model,
+            relevant_paper_count=len(relevant),
+            words=inputs.exec_summary_words,
+            cache=inputs.use_prompt_cache,
+            usage_totals=usage_totals,
+        )
+        header = [
+            f"# Executive Summary — {inputs.working_title}",
+            "",
+            f"_Companion to `{output_path.name}`. Same evidence, organised for a reader who will not "
+            "read the full review._",
+            "",
+        ]
+        if summary_failure:
+            header += [
+                f"> ⚠️ **This is a skeleton, not a written summary.** The request to Claude failed "
+                f"({summary_failure}), so what follows lists what the review found without "
+                "interpreting it. Re-run to try again.",
+                "",
+            ]
+        summary_text = "\n".join(header) + "\n" + summary_md.rstrip() + "\n"
+
+        summary_path = (
+            Path(inputs.exec_summary_path)
+            if inputs.exec_summary_path
+            else output_path.with_suffix(".exec-summary.md")
+        )
+        summary_path.parent.mkdir(parents=True, exist_ok=True)
+        summary_path.write_text(summary_text, encoding="utf-8")
+        print(f"Executive summary: {summary_path}", file=sys.stderr)
+        if inputs.write_html:
+            summary_html_path = summary_path.with_suffix(".html")
+            summary_html_path.write_text(
+                render_review_html(summary_text, title="Executive Summary"), encoding="utf-8"
+            )
+            print(f"Executive summary (HTML): {summary_html_path}", file=sys.stderr)
 
     usage_line = llm.format_usage(usage_totals)
     if usage_line:

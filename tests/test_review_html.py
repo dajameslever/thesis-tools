@@ -61,3 +61,31 @@ def test_page_without_sections_still_renders():
     html = render_review_html("# Just a title\n")
     assert "<h1>Just a title</h1>" in html
     assert "Contents" not in html
+
+
+def test_strength_tags_render_as_chips_not_trailing_text():
+    """[Evidence] left inline wraps onto its own line and reads as part of
+    the sentence; as a chip it reads as the label it is."""
+    from thesis_tools.review_html import markdown_to_html
+
+    body, _ = markdown_to_html("### Trust gates adoption [Evidence]\n\nBody.")
+    assert '<span class="lr-tag lr-tag-evidence">Evidence</span>' in body
+    assert "[Evidence]" not in body
+    assert ">Trust gates adoption<" in body
+
+
+def test_strength_tags_are_recognised_for_each_kind():
+    from thesis_tools.review_html import markdown_to_html
+
+    for kind in ("Evidence", "Contested", "Gap"):
+        body, _ = markdown_to_html(f"### A finding [{kind}]")
+        assert f'lr-tag-{kind.lower()}' in body
+
+
+def test_ordinary_headings_and_bracketed_citations_are_left_alone():
+    """IEEE section headings and citations must not be mistaken for tags."""
+    from thesis_tools.review_html import markdown_to_html
+
+    body, toc = markdown_to_html("## 1. What the evidence shows [3]\n\nBody.")
+    assert "lr-tag" not in body
+    assert toc[0][1] == "1. What the evidence shows [3]"
