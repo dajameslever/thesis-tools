@@ -14,7 +14,7 @@ from . import llm
 from .citations import STYLES
 from .library.index_store import LibraryIndex
 from .library.library_indexer import LibraryIndexerInputs, run_library_indexer
-from .library.visualize import build_visualization_html
+from .library.visualize import build_literature_matrix, compute_stats, render_html
 from .literature_review import LiteratureReviewInputs, run_literature_review
 from .project import DEFAULT_PROJECT_PATH, ProjectState
 from .sources import ALL_SOURCES
@@ -436,6 +436,15 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     vl.add_argument("--no-stance-cache", dest="use_stance_cache", action="store_false", help="Always re-classify with Claude, ignoring any cached result")
     vl.set_defaults(use_stance_cache=True)
+    vl.add_argument("--style", choices=STYLES, default=None, help="Citation style for the Excel matrix's Citation column (default: apa, or whatever Part 1 already used)")
+    vl.add_argument(
+        "--matrix-path",
+        default=None,
+        help="Where to write the companion Excel synthesis matrix — one row per indexed paper, in academic "
+        "literature-review format, downloadable from the HTML page (default: literature_matrix.xlsx next to --output)",
+    )
+    vl.add_argument("--no-matrix", dest="write_matrix", action="store_false", help="Don't generate the Excel matrix, just the HTML page")
+    vl.set_defaults(write_matrix=True)
     vl.add_argument("--project-file", default=DEFAULT_PROJECT_PATH, help=f"Where shared project state lives (default: {DEFAULT_PROJECT_PATH}) — read to reuse Part 1's sub-questions/Claude settings automatically")
 
     lr = subparsers.add_parser("literature-review", help="Part 3: draft a literature review structured around your sub-questions, from what Part 1/2 already found")
@@ -701,8 +710,10 @@ def _run_visualize_library_command(args: argparse.Namespace) -> int:
     if use_llm and args.use_stance_cache:
         stance_cache_path = args.stance_cache_path or str(index_path.parent / "stance_cache.json")
 
+    style = args.style or project.style or "apa"
+
     index = LibraryIndex.load(index_path)
-    html = build_visualization_html(
+    stats = compute_stats(
         index,
         sub_questions=sub_questions,
         use_llm=use_llm,
@@ -713,6 +724,21 @@ def _run_visualize_library_command(args: argparse.Namespace) -> int:
 
     output_path = Path(args.output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Built from the same `stats` above, so it reuses whatever stance
+    # classification just ran (cached or freshly made) instead of a second
+    # round of Claude calls — see build_literature_matrix()'s own docstring.
+    matrix_filename = None
+    if args.write_matrix and stats["total"] > 0:
+        matrix_path = Path(args.matrix_path) if args.matrix_path else output_path.parent / "literature_matrix.xlsx"
+        matrix_path.parent.mkdir(parents=True, exist_ok=True)
+        build_literature_matrix(index, stats, style=style).save(matrix_path)
+        # Relative to the HTML file's own folder, so the page's download
+        # link resolves whether or not --matrix-path pointed elsewhere.
+        matrix_filename = os.path.relpath(matrix_path, output_path.parent)
+        print(f"Excel matrix ({len(index.entries)} paper(s)) written to {matrix_path}")
+
+    html = render_html(stats, matrix_filename=matrix_filename)
     output_path.write_text(html, encoding="utf-8")
 
     print(f"Visualization ({len(index.entries)} file(s)) written to {output_path}")

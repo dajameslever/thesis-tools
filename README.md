@@ -408,6 +408,27 @@ sub-question set triggers a fresh Claude call, restoring the "cheap to
 regenerate any time" promise this command otherwise makes. Pass
 `--no-stance-cache` to always reclassify from scratch.
 
+### Downloading a literature-review matrix
+
+Every `visualize-library` run also writes a companion Excel file —
+`library/literature_matrix.xlsx` by default, next to `--output` — with a
+**⬇ Download as Excel** link right at the top of the HTML page. One row per
+indexed paper, in the "synthesis matrix" format literature-review guidance
+commonly recommends for tracking sources: citation (in whatever `--style`
+you've configured), authors, year, title, venue, DOI, verification status,
+a free local summary, relevance to your research question (when `--question`
+is set), the local file path, and — when sub-questions are configured — one
+column per sub-question showing that paper's supports/challenges/mixed/
+unrelated stance. It's a real spreadsheet: frozen header row, autofilter,
+and sortable/filterable like any other `.xlsx`, so you can work the review
+outside a browser, add your own notes column, or hand it to a supervisor.
+
+Building the matrix never triggers a second round of Claude calls — it
+reuses whichever stance classification (cached or freshly made) the HTML
+page's own `--llm-summaries` run already computed. Use `--matrix-path` to
+write it somewhere else, or `--no-matrix` to skip generating it and just get
+the HTML page.
+
 It's pure local computation over the existing index — no network calls, so
 it's cheap to regenerate (`-o some/path.html` to change where it's written)
 any time you re-run `index-library`.
@@ -540,6 +561,7 @@ thesis_tools/
     report.py            Renders Part 2's Markdown report
     library_indexer.py   Orchestrates Part 2
     visualize.py          Computes + renders the `visualize-library` HTML page
+    literature_matrix.py  Builds the companion Excel synthesis-matrix workbook
   cli.py              `topic-finder` / `index-library` / `visualize-library` / `literature-review` / `configure` commands
 tests/                Unit tests (network calls are mocked; PDF/docx tests use real files)
 ```

@@ -21,9 +21,10 @@ from .. import llm
 from ..links import doi_url, google_scholar_search_url, sciencedirect_search_url
 from ..recency import DEFAULT_OLD_THRESHOLD_YEARS, age_years, newest_year
 from ..relevance import score_relevance
-from ..subquestions import analyze_subquestions
+from ..subquestions import SubquestionAnalysis, analyze_subquestions
 from .citation_graph import build_citation_network, build_coverage
 from .index_store import LibraryEntry, LibraryIndex
+from .literature_matrix import build_literature_matrix_workbook
 
 # Display labels and a fixed order for the "by source" breakdown — the
 # order matches the categorical palette below, so the same source always
@@ -118,6 +119,7 @@ def compute_stats(
 
     sub_questions = sub_questions or []
     subquestion_coverage: List[dict] = []
+    analysis: Optional[SubquestionAnalysis] = None
     if sub_questions:
         analysis = analyze_subquestions(
             sub_questions,
@@ -176,6 +178,10 @@ def compute_stats(
         "no_subquestion_coverage_titles": no_subquestion_coverage_titles,
         "research_question": research_question,
         "low_relevance_titles": low_relevance_titles,
+        # Not rendered directly by render_html() — kept so build_literature_matrix()
+        # can reuse the same stance classification build_visualization_html()
+        # already computed, instead of re-running (and re-billing) it.
+        "_stance_analysis": analysis,
     }
     stats["weaknesses"] = _compute_weaknesses(stats)
     return stats
@@ -565,9 +571,14 @@ def _render_subquestion_coverage_section(stats: dict) -> str:
     return "".join(cards)
 
 
-def render_html(stats: dict) -> str:
+def render_html(stats: dict, matrix_filename: Optional[str] = None) -> str:
     """Renders `stats` (from `compute_stats`) into a complete, self-contained
-    HTML document — no external requests, opens correctly straight off disk."""
+    HTML document — no external requests, opens correctly straight off disk.
+
+    `matrix_filename`, when given, adds a download link for the companion
+    Excel synthesis matrix (see literature_matrix.py) — a relative path so
+    it resolves whether the two files sit in the same folder or the matrix
+    was written somewhere nearby."""
     total = stats["total"]
     coverage = stats["coverage"]
 
@@ -639,6 +650,14 @@ def render_html(stats: dict) -> str:
         {weaknesses_html}
         """
 
+    matrix_link_html = ""
+    if total > 0 and matrix_filename:
+        matrix_link_html = (
+            f'<p class="viz-subtitle"><a href="{_esc(matrix_filename)}" download>'
+            "⬇ Download as Excel (.xlsx)</a> — one row per paper, in academic "
+            "literature-review synthesis-matrix format</p>"
+        )
+
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -651,6 +670,7 @@ def render_html(stats: dict) -> str:
 <div class="viz-root">
   <h1>Library Visualization</h1>
   <p class="viz-subtitle">Generated {_esc(stats.get('generated_at', ''))} · {total} file(s) indexed</p>
+  {matrix_link_html}
   {body}
 </div>
 </body>
@@ -914,6 +934,7 @@ def build_visualization_html(
     llm_model: str = llm.DEFAULT_EXTRACTION_MODEL,
     research_question: Optional[str] = None,
     stance_cache_path: Optional[str] = None,
+    matrix_filename: Optional[str] = None,
 ) -> str:
     """Convenience entry point used by the CLI: compute + render in one call."""
     return render_html(
@@ -924,5 +945,21 @@ def build_visualization_html(
             llm_model=llm_model,
             research_question=research_question,
             stance_cache_path=stance_cache_path,
-        )
+        ),
+        matrix_filename=matrix_filename,
+    )
+
+
+def build_literature_matrix(index: LibraryIndex, stats: dict, style: str = "apa"):
+    """The companion Excel synthesis matrix for a visualize-library run —
+    built from the same `stats` compute_stats() already produced, so it
+    reuses whatever stance analysis that run already computed (cached or
+    freshly classified) instead of triggering a second round of Claude
+    calls. Returns an openpyxl Workbook; call `.save(path)` on it."""
+    return build_literature_matrix_workbook(
+        index,
+        style=style,
+        sub_questions=stats.get("sub_questions") or [],
+        research_question=stats.get("research_question"),
+        analysis=stats.get("_stance_analysis"),
     )

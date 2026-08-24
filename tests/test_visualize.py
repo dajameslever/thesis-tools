@@ -1,7 +1,7 @@
 from unittest.mock import patch
 
 from thesis_tools.library.index_store import LibraryEntry, LibraryIndex
-from thesis_tools.library.visualize import build_visualization_html, compute_stats, render_html
+from thesis_tools.library.visualize import build_literature_matrix, build_visualization_html, compute_stats, render_html
 from thesis_tools.sources.base import Paper
 
 
@@ -420,3 +420,48 @@ def test_render_html_shows_low_relevance_and_unlinked_weaknesses():
     assert "Coffee Prices in Brazil" in html
     assert "don&#x27;t relate to any of your sub-questions" in html
     assert "low relevance to your research question" in html
+
+
+def test_compute_stats_stores_stance_analysis_for_matrix_reuse():
+    question = "Does digital transformation affect sustainability?"
+    entry = _entry("a.pdf", title="Paper A")
+    stats_with = compute_stats(LibraryIndex([entry]), sub_questions=[question], use_llm=False)
+    assert stats_with["_stance_analysis"] is not None
+
+    stats_without = compute_stats(LibraryIndex([entry]))
+    assert stats_without["_stance_analysis"] is None
+
+
+def test_build_literature_matrix_reuses_stats_stance_analysis():
+    question = "Does digital transformation affect sustainability?"
+    entry = _entry("a.pdf", title="Paper A", abstract="About digital transformation and sustainability.")
+    stats = compute_stats(LibraryIndex([entry]), sub_questions=[question], use_llm=False)
+
+    wb = build_literature_matrix(LibraryIndex([entry]), stats, style="apa")
+    ws = wb.active
+    header = next(ws.iter_rows(values_only=True))
+    assert header[-1] == f"Q: {question}"
+
+
+def test_render_html_includes_download_link_when_matrix_filename_given():
+    entry = _entry("a.pdf", title="Paper A")
+    html = render_html(compute_stats(LibraryIndex([entry])), matrix_filename="literature_matrix.xlsx")
+    assert 'href="literature_matrix.xlsx" download' in html
+    assert "Download as Excel" in html
+
+
+def test_render_html_omits_download_link_without_matrix_filename():
+    entry = _entry("a.pdf", title="Paper A")
+    html = render_html(compute_stats(LibraryIndex([entry])))
+    assert "Download as Excel" not in html
+
+
+def test_render_html_omits_download_link_when_index_empty_even_with_filename():
+    html = render_html(compute_stats(LibraryIndex()), matrix_filename="literature_matrix.xlsx")
+    assert "Download as Excel" not in html
+
+
+def test_build_visualization_html_threads_matrix_filename():
+    entry = _entry("a.pdf", title="Paper A")
+    html = build_visualization_html(LibraryIndex([entry]), matrix_filename="literature_matrix.xlsx")
+    assert 'href="literature_matrix.xlsx" download' in html

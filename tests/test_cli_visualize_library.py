@@ -250,6 +250,146 @@ def test_visualize_library_explicit_stance_cache_path(mock_ask, mock_get_client,
     assert not (tmp_path / "library" / "stance_cache.json").exists()
 
 
+def test_visualize_library_writes_matrix_next_to_output_by_default(tmp_path):
+    index_path = tmp_path / "library" / "index.json"
+    output_path = tmp_path / "library" / "visualization.html"
+    _index_with_paper(index_path, title="A Paper")
+
+    rc = main(["visualize-library", "--index-path", str(index_path), "--output", str(output_path)])
+
+    assert rc == 0
+    matrix_path = tmp_path / "library" / "literature_matrix.xlsx"
+    assert matrix_path.is_file()
+
+    from openpyxl import load_workbook
+
+    ws = load_workbook(matrix_path).active
+    header, row = list(ws.iter_rows(values_only=True))
+    assert row[4] == "A Paper"
+
+    html = output_path.read_text(encoding="utf-8")
+    assert 'href="literature_matrix.xlsx" download' in html
+
+
+def test_visualize_library_custom_matrix_path(tmp_path):
+    index_path = tmp_path / "library" / "index.json"
+    output_path = tmp_path / "library" / "visualization.html"
+    custom_matrix = tmp_path / "exports" / "matrix.xlsx"
+    _index_with_paper(index_path, title="A Paper")
+
+    rc = main(
+        [
+            "visualize-library",
+            "--index-path", str(index_path),
+            "--output", str(output_path),
+            "--matrix-path", str(custom_matrix),
+        ]
+    )
+
+    assert rc == 0
+    assert custom_matrix.is_file()
+    assert not (tmp_path / "library" / "literature_matrix.xlsx").exists()
+
+    html = output_path.read_text(encoding="utf-8")
+    # Relative from library/ to exports/matrix.xlsx.
+    assert 'href="../exports/matrix.xlsx" download' in html
+
+
+def test_visualize_library_no_matrix_skips_excel_and_link(tmp_path):
+    index_path = tmp_path / "library" / "index.json"
+    output_path = tmp_path / "library" / "visualization.html"
+    _index_with_paper(index_path, title="A Paper")
+
+    rc = main(
+        [
+            "visualize-library",
+            "--index-path", str(index_path),
+            "--output", str(output_path),
+            "--no-matrix",
+        ]
+    )
+
+    assert rc == 0
+    assert not (tmp_path / "library" / "literature_matrix.xlsx").exists()
+    html = output_path.read_text(encoding="utf-8")
+    assert "Download as Excel" not in html
+
+
+def test_visualize_library_matrix_uses_configured_style(tmp_path):
+    index_path = tmp_path / "library" / "index.json"
+    output_path = tmp_path / "library" / "visualization.html"
+    entry = LibraryEntry(
+        file_path="a.pdf",
+        file_hash="hash-a",
+        file_type="pdf",
+        size_bytes=100,
+        indexed_at="2026-01-01T00:00:00",
+        confidence="verified-doi",
+        doi="10.1/a",
+        paper=Paper(title="A Paper", authors=["Jane Doe"], doi="10.1/a", year=2023, sources=["crossref"]),
+    )
+    LibraryIndex([entry]).save(index_path)
+
+    rc = main(
+        [
+            "visualize-library",
+            "--index-path", str(index_path),
+            "--output", str(output_path),
+            "--style", "ieee",
+        ]
+    )
+
+    assert rc == 0
+    from openpyxl import load_workbook
+
+    ws = load_workbook(tmp_path / "library" / "literature_matrix.xlsx").active
+    _, row = list(ws.iter_rows(values_only=True))
+    assert row[1].startswith("[1]")
+
+
+def test_visualize_library_empty_index_writes_no_matrix(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    index_path = tmp_path / "library" / "index.json"
+    LibraryIndex().save(index_path)
+
+    rc = main(["visualize-library", "--index-path", str(index_path)])
+
+    assert rc == 0
+    assert not (tmp_path / "library" / "literature_matrix.xlsx").exists()
+
+
+@patch("thesis_tools.subquestions.llm.get_client")
+@patch("thesis_tools.subquestions.llm.ask")
+def test_visualize_library_matrix_does_not_trigger_extra_llm_calls(mock_ask, mock_get_client, tmp_path):
+    mock_get_client.return_value = object()
+    mock_ask.return_value = "1: supports - confirms it."
+    index_path = tmp_path / "library" / "index.json"
+    output_path = tmp_path / "library" / "visualization.html"
+    project_file = tmp_path / "project.json"
+    _index_with_paper(
+        index_path,
+        title="Relevant Paper",
+        full_text_excerpt="This significantly supports the claim that X affects Y, consistent with theory.",
+    )
+
+    rc = main(
+        [
+            "visualize-library",
+            "--index-path", str(index_path),
+            "--output", str(output_path),
+            "--project-file", str(project_file),
+            "--sub-questions", "Does X affect Y?",
+            "--llm-summaries",
+        ]
+    )
+
+    assert rc == 0
+    # One classification call for the HTML stats — building the matrix from
+    # the same stats must not trigger a second round of Claude calls.
+    assert mock_ask.call_count == 1
+    assert (tmp_path / "library" / "literature_matrix.xlsx").is_file()
+
+
 def test_visualize_library_reuses_project_research_question(tmp_path):
     from thesis_tools.project import ProjectState
 
