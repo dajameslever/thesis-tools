@@ -4,12 +4,20 @@ A local toolkit for working through a thesis or dissertation, built one part at 
 
 I build this as I struggled during my masters to "master" the literature review, I didn't use Ai much at the time, but now with AI it can be easier to evaluate and help co-think about your dissertation. So I've built these tools. The goal isn't to write your dissertation quickly, its actually to help you plan and research your literature review.
 
+This works best with claude, you need an api version of claude - goto console.claude.ai and purchase some credits - about $10 should be sufficient. The code tries to re-use outputs and use AI efficiently, but i'm sure there's room for improvement. 
+
+Go through the steps to be the most efficient. 
+
 - **Part 1 — Topic Finder:** pick/pressure-test a thesis title, break it into
   sub-questions, and check the literature for overlap, agreement, and conflict.
 - **Part 2 — Library Indexer:** scan a folder of downloaded papers (PDF/docx/
   txt/HTML) and turn it into a verified, cited, searchable index.
+- **Part 2a - Visualisation:** this visualises Part 2 and helps you find more sources, it also builds your index as an excel source. 
 - **Part 3 — Literature Review Drafter:** turn what Parts 1 and 2 found into
   a structured literature review draft, organized around your sub-questions.
+
+Spend a lot of time with part 2 and 2a - find more sources, ingest, review. 
+Decide if your question is good enough etc. Go back to part 1 if you need to change it. 
 
 All three share a **project file** (`thesis_tools_project.json`, created next
 to wherever you run the tool) holding your field, working title, research
