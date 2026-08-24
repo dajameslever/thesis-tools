@@ -28,6 +28,7 @@ from . import llm
 from .citations import STYLES, format_citation, in_text_citation, reference_sort_key
 from .dedupe import dedupe_papers
 from .exec_summary import build_exec_summary
+from .outputs import write_output
 from .relevance import score_relevance, tokenize
 from .review_html import render_review_html
 from .sources.base import Paper
@@ -825,15 +826,13 @@ def run_literature_review(inputs: LiteratureReviewInputs) -> str:
         html_title = "Literature Review — Draft"
 
     output_path = Path(inputs.output_path) if inputs.output_path else _default_output_path(inputs.output_type)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(report_text, encoding="utf-8")
+    write_output(output_path, report_text)
 
     if inputs.write_html:
         # Rendered from the same Markdown that was just written, so the two
         # can never drift apart.
         html_path = Path(inputs.html_output_path) if inputs.html_output_path else output_path.with_suffix(".html")
-        html_path.parent.mkdir(parents=True, exist_ok=True)
-        html_path.write_text(render_review_html(report_text, title=html_title), encoding="utf-8")
+        write_output(html_path, render_review_html(report_text, title=html_title))
         print(f"HTML version: {html_path}", file=sys.stderr)
 
     usage_line = llm.format_usage(usage_totals)

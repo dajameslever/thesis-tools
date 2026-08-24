@@ -13,6 +13,7 @@ from . import llm
 from .citations import STYLES
 from .dedupe import dedupe_papers
 from .library.library_indexer import index_known_papers
+from .outputs import write_output
 from .paper_download import download_papers
 from .relevance import keywords_from_text, score_relevance, title_similarity
 from .report import ScoredPaper, build_report
@@ -246,8 +247,7 @@ def run_topic_finder(inputs: TopicFinderInputs) -> str:
     )
 
     output_path = Path(inputs.output_path) if inputs.output_path else _default_output_path(inputs.working_title)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(report_text, encoding="utf-8")
+    write_output(output_path, report_text)
 
     cache_path = cache_path_for(output_path)
     _save_cache(

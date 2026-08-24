@@ -17,6 +17,7 @@ from .library.library_indexer import LibraryIndexerInputs, run_library_indexer
 from .library.citation_graph import DEFAULT_MIN_GAP_RELEVANCE
 from .library.visualize import build_literature_matrix, compute_stats, render_html
 from .literature_review import OUTPUT_TYPES, LiteratureReviewInputs, run_literature_review
+from .outputs import archive_existing, write_output
 from .project import DEFAULT_PROJECT_PATH, ProjectState
 from .sources import ALL_SOURCES
 from .subquestions import generate_subquestions
@@ -812,6 +813,9 @@ def _run_visualize_library_command(args: argparse.Namespace) -> int:
     if args.write_matrix and stats["total"] > 0:
         matrix_path = Path(args.matrix_path) if args.matrix_path else output_path.parent / "literature_matrix.xlsx"
         matrix_path.parent.mkdir(parents=True, exist_ok=True)
+        # openpyxl writes by path, so the old copy is filed away first
+        # rather than through write_output().
+        archive_existing(matrix_path)
         build_literature_matrix(index, stats, style=style).save(matrix_path)
         # Relative to the HTML file's own folder, so the page's download
         # link resolves whether or not --matrix-path pointed elsewhere.
@@ -819,7 +823,7 @@ def _run_visualize_library_command(args: argparse.Namespace) -> int:
         print(f"Excel matrix ({len(index.entries)} paper(s)) written to {matrix_path}")
 
     html = render_html(stats, matrix_filename=matrix_filename)
-    output_path.write_text(html, encoding="utf-8")
+    write_output(output_path, html)
 
     print(f"Visualization ({len(index.entries)} file(s)) written to {output_path}")
     return 0
