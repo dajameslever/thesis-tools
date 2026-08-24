@@ -622,3 +622,118 @@ def test_bars_are_square_against_the_baseline():
     assert path.startswith('<path d="M 100.0 10.0 H ')
     assert 'rx="4"' not in path
     assert path.count(" A ") == 2  # one rounded corner at each end of the data end
+
+
+_Q = "Does sleep deprivation affect adolescent decision-making?"
+
+
+def _citing(file_path, title, refs):
+    return _entry(file_path, doi=f"10.1/{file_path}", title=title, references=refs)
+
+
+def _section(html, heading):
+    """Just this section — slicing to the end of the document would sweep in
+    the bar charts of every section below it."""
+    start = html.index(f"<h2>{heading}</h2>")
+    end = html.find("<h2>", start + 1)
+    return html[start:end if end != -1 else len(html)]
+
+
+def test_exploration_section_lists_unimported_citations_as_branches():
+    index = LibraryIndex(
+        [
+            _citing("a.pdf", "Sleep deprivation in adolescents", [
+                {"doi": "10.9/new", "title": "Adolescent sleep and school schedules", "year": 2005},
+            ]),
+        ]
+    )
+    html = render_html(compute_stats(index, research_question=_Q))
+    assert "Where to explore next" in html
+    assert 'class="viz-branch"' in html
+    assert "Adolescent sleep and school schedules" in html
+    assert "1 to explore" in html
+    assert "distinct work(s) are cited but not imported" in html
+
+
+def test_exploration_section_holds_back_off_topic_citations():
+    index = LibraryIndex(
+        [
+            _citing("a.pdf", "Sleep deprivation in adolescents", [
+                {"doi": "10.9/coffee", "title": "Coffee bean price volatility in Brazil", "year": 2018},
+                {"doi": "10.9/sleep", "title": "Adolescent sleep and school schedules", "year": 2005},
+            ]),
+        ]
+    )
+    html = render_html(compute_stats(index, research_question=_Q))
+    assert "Adolescent sleep and school schedules" in html
+    assert "Coffee bean price volatility in Brazil" not in html
+    assert "scored off-topic" in html
+
+
+def test_exploration_section_filters_nothing_without_a_question():
+    index = LibraryIndex(
+        [
+            _citing("a.pdf", "Some Paper", [
+                {"doi": "10.9/coffee", "title": "Coffee bean price volatility in Brazil", "year": 2018},
+            ]),
+        ]
+    )
+    html = render_html(compute_stats(index))
+    assert "Coffee bean price volatility in Brazil" in html
+    assert "No research question or sub-questions configured, so nothing is filtered" in html
+
+
+def test_exploration_section_prompts_when_no_references_fetched():
+    html = render_html(compute_stats(LibraryIndex([_entry("a.pdf")]), research_question=_Q))
+    assert "Where to explore next" in html
+    assert "No reference lists fetched yet" in html
+
+
+def test_min_gap_relevance_zero_keeps_off_topic_citations():
+    index = LibraryIndex(
+        [
+            _citing("a.pdf", "Sleep deprivation in adolescents", [
+                {"doi": "10.9/coffee", "title": "Coffee bean price volatility in Brazil", "year": 2018},
+            ]),
+        ]
+    )
+    filtered = render_html(compute_stats(index, research_question=_Q))
+    assert "Coffee bean price volatility in Brazil" not in filtered
+
+    unfiltered = render_html(compute_stats(index, research_question=_Q, min_gap_relevance=0.0))
+    assert "Coffee bean price volatility in Brazil" in unfiltered
+
+
+def test_papers_to_consider_excludes_off_topic_gaps_but_keeps_them_reachable():
+    refs = [
+        {"doi": "10.9/coffee", "title": "Coffee bean price volatility in Brazil", "year": 2018},
+        {"doi": "10.9/sleep", "title": "Adolescent sleep and school schedules", "year": 2005},
+    ]
+    index = LibraryIndex([_citing("a.pdf", "Paper A", refs), _citing("b.pdf", "Paper B", refs)])
+    html = render_html(compute_stats(index, research_question=_Q))
+    section = _section(html, "Papers worth adding next")
+    assert "Adolescent sleep and school schedules" in section
+    # Held back from the ranked list, but still one click away.
+    assert "scored off-topic against your questions and are held back" in section
+    assert "Show the 1 held back as off-topic" in section
+
+
+def test_papers_to_consider_bars_stay_in_citation_count_order():
+    """Relevance is the filter, not the ranking — a bar chart out of length
+    order is unreadable whatever it was sorted by."""
+    import re
+
+    common = {"doi": "10.9/common", "title": "Adolescent sleep and school schedules", "year": 2005}
+    rare = {"doi": "10.9/rare", "title": "Sleep loss and adolescent memory", "year": 2009}
+    index = LibraryIndex(
+        [
+            _citing("a.pdf", "Paper A", [common, rare]),
+            _citing("b.pdf", "Paper B", [common, rare]),
+            _citing("c.pdf", "Paper C", [common]),
+        ]
+    )
+    html = render_html(compute_stats(index, research_question=_Q))
+    section = _section(html, "Papers worth adding next")
+    counts = [int(c) for c in re.findall(r'class="viz-bar-count">(\d+)<', section)]
+    assert counts == sorted(counts, reverse=True)
+    assert counts[0] == 3

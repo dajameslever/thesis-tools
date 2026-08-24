@@ -14,6 +14,7 @@ from . import llm
 from .citations import STYLES
 from .library.index_store import LibraryIndex
 from .library.library_indexer import LibraryIndexerInputs, run_library_indexer
+from .library.citation_graph import DEFAULT_MIN_GAP_RELEVANCE
 from .library.visualize import build_literature_matrix, compute_stats, render_html
 from .literature_review import LiteratureReviewInputs, run_literature_review
 from .project import DEFAULT_PROJECT_PATH, ProjectState
@@ -443,6 +444,14 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Where to write the companion Excel synthesis matrix — one row per indexed paper, in academic "
         "literature-review format, downloadable from the HTML page (default: literature_matrix.xlsx next to --output)",
     )
+    vl.add_argument(
+        "--min-gap-relevance",
+        type=float,
+        default=None,
+        help="How on-topic a cited-but-not-imported work's title must look, against your question and "
+        "sub-questions, to be suggested as somewhere to explore (0-1, default: 0.1). Pass 0 to suggest "
+        "everything your papers cite regardless of topic",
+    )
     vl.add_argument("--no-matrix", dest="write_matrix", action="store_false", help="Don't generate the Excel matrix, just the HTML page")
     vl.set_defaults(write_matrix=True)
     vl.add_argument("--project-file", default=DEFAULT_PROJECT_PATH, help=f"Where shared project state lives (default: {DEFAULT_PROJECT_PATH}) — read to reuse Part 1's sub-questions/Claude settings automatically")
@@ -720,6 +729,9 @@ def _run_visualize_library_command(args: argparse.Namespace) -> int:
         llm_model=llm_model,
         research_question=research_question,
         stance_cache_path=stance_cache_path,
+        min_gap_relevance=(
+            args.min_gap_relevance if args.min_gap_relevance is not None else DEFAULT_MIN_GAP_RELEVANCE
+        ),
     )
 
     output_path = Path(args.output_path)

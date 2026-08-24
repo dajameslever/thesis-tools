@@ -1,8 +1,11 @@
 from thesis_tools.library.citation_graph import (
     build_citation_network,
     build_coverage,
+    build_exploration_tree,
     build_internal_links,
     build_mermaid_mindmap,
+    gap_relevance,
+    split_by_relevance,
 )
 from thesis_tools.library.index_store import LibraryEntry
 from thesis_tools.sources.base import Paper
@@ -193,3 +196,174 @@ def test_build_internal_links_no_self_loops_or_duplicates():
 def test_build_internal_links_dedupes_the_same_paper_indexed_twice():
     entries = [_entry("Dup", "10.1/dup", year=2000), _entry("Dup (copy)", "10.1/dup", year=2000)]
     assert len(build_internal_links(entries)["papers"]) == 1
+
+
+QUESTIONS = [
+    "Does sleep deprivation affect adolescent decision-making?",
+    "Does sleep loss increase risk-taking in adolescents?",
+    "Does sleep loss impair working memory?",
+    "Do later school start times improve outcomes?",
+]
+
+
+def test_gap_relevance_scores_on_topic_titles_above_off_topic_ones():
+    on_topic = gap_relevance("Adolescent sleep and school schedules", QUESTIONS)
+    off_topic = gap_relevance("Coffee bean price volatility in Brazil", QUESTIONS)
+    assert on_topic > off_topic
+    assert off_topic == 0.0
+
+
+def test_gap_relevance_separates_a_real_match_from_an_incidental_word():
+    """The regression that drove the term-weighting: both titles match
+    exactly one word in four, but "sleep" is central to the question set and
+    "times" is incidental to it, so the scores must differ."""
+    real = gap_relevance("Measuring Sleepiness: The Stanford Scale", QUESTIONS)
+    incidental = gap_relevance("Urban planning and commute times", QUESTIONS)
+    assert real > incidental
+
+
+def test_gap_relevance_matches_across_word_endings():
+    # "sleepiness"/"sleep" and "adolescents"/"adolescent" must not miss.
+    assert gap_relevance("Sleepiness in adolescents", QUESTIONS) > 0
+
+
+def test_gap_relevance_is_zero_without_questions():
+    assert gap_relevance("Anything At All", []) == 0.0
+    assert gap_relevance("Anything At All", ["", "   "]) == 0.0
+
+
+def test_gap_relevance_is_stable_as_the_question_set_grows():
+    """Normalising by the title, not the question set: adding a sub-question
+    that says nothing about a title must not make that title look less
+    relevant than it was."""
+    one = gap_relevance("Sleep and memory", ["Does sleep loss impair working memory?"])
+    plus_unrelated = gap_relevance(
+        "Sleep and memory",
+        ["Does sleep loss impair working memory?", "Do coffee prices track rainfall in Brazil?"],
+    )
+    assert plus_unrelated == one
+
+
+def test_split_by_relevance_partitions_and_sorts_best_first():
+    works = [
+        {"title": "Coffee bean price volatility in Brazil", "cited_by": ["a", "b"]},
+        {"title": "Adolescent sleep and school schedules", "cited_by": ["a"]},
+    ]
+    on_topic, off_topic = split_by_relevance(works, QUESTIONS)
+    assert [w["title"] for w in on_topic] == ["Adolescent sleep and school schedules"]
+    assert [w["title"] for w in off_topic] == ["Coffee bean price volatility in Brazil"]
+    assert all("relevance" in w for w in on_topic + off_topic)
+
+
+def test_split_by_relevance_keeps_everything_when_no_questions_configured():
+    works = [{"title": "Anything", "cited_by": ["a"]}, {"title": "Anything Else", "cited_by": ["b"]}]
+    on_topic, off_topic = split_by_relevance(works, [])
+    assert len(on_topic) == 2
+    assert off_topic == []
+
+
+def test_split_by_relevance_threshold_of_zero_keeps_everything():
+    works = [{"title": "Coffee bean price volatility in Brazil", "cited_by": ["a"]}]
+    on_topic, off_topic = split_by_relevance(works, QUESTIONS, min_relevance=0.0)
+    assert len(on_topic) == 1
+    assert off_topic == []
+
+
+def test_build_exploration_tree_splits_held_from_unimported():
+    entries = [
+        _entry("Held Paper", "10.1/held", year=2010),
+        _entry(
+            "Citing Paper",
+            "10.1/citing",
+            year=2020,
+            references=[
+                {"doi": "10.1/held", "title": "Held Paper", "year": 2010},
+                {"doi": "10.9/new", "title": "Adolescent sleep and school schedules", "year": 2005},
+            ],
+        ),
+    ]
+    tree = build_exploration_tree(entries, QUESTIONS)
+    citing = next(p for p in tree["papers"] if p["title"] == "Citing Paper")
+    assert [w["title"] for w in citing["in_library"]] == ["Held Paper"]
+    assert [w["title"] for w in citing["to_explore"]] == ["Adolescent sleep and school schedules"]
+    assert tree["distinct_to_explore"] == 1
+
+
+def test_build_exploration_tree_holds_back_off_topic_citations():
+    entries = [
+        _entry(
+            "Citing Paper",
+            "10.1/citing",
+            year=2020,
+            references=[
+                {"doi": "10.9/coffee", "title": "Coffee bean price volatility in Brazil", "year": 2018},
+                {"doi": "10.9/sleep", "title": "Adolescent sleep and school schedules", "year": 2005},
+            ],
+        ),
+    ]
+    tree = build_exploration_tree(entries, QUESTIONS)
+    citing = tree["papers"][0]
+    assert [w["title"] for w in citing["to_explore"]] == ["Adolescent sleep and school schedules"]
+    assert citing["off_topic_count"] == 1
+    assert tree["distinct_off_topic"] == 1
+
+
+def test_build_exploration_tree_filters_nothing_without_questions():
+    entries = [
+        _entry(
+            "Citing Paper",
+            "10.1/citing",
+            references=[{"doi": "10.9/coffee", "title": "Coffee bean price volatility in Brazil", "year": 2018}],
+        ),
+    ]
+    tree = build_exploration_tree(entries, [])
+    assert tree["questions_configured"] is False
+    assert tree["papers"][0]["to_explore_total"] == 1
+    assert tree["papers"][0]["off_topic_count"] == 0
+
+
+def test_build_exploration_tree_orders_by_how_much_it_opens_up():
+    entries = [
+        _entry("Few Leads", "10.1/few", year=2020,
+               references=[{"doi": "10.9/a", "title": "Adolescent sleep patterns", "year": 2000}]),
+        _entry("Many Leads", "10.1/many", year=2021, references=[
+            {"doi": "10.9/b", "title": "Adolescent sleep and school schedules", "year": 2001},
+            {"doi": "10.9/c", "title": "Sleep loss and memory in adolescents", "year": 2002},
+            {"doi": "10.9/d", "title": "Risk-taking after sleep deprivation", "year": 2003},
+        ]),
+    ]
+    tree = build_exploration_tree(entries, QUESTIONS)
+    assert tree["papers"][0]["title"] == "Many Leads"
+
+
+def test_build_exploration_tree_caps_the_list_per_paper_but_reports_the_total():
+    from thesis_tools.library.citation_graph import MAX_EXPLORE_PER_PAPER
+
+    refs = [
+        {"doi": f"10.9/{i}", "title": f"Adolescent sleep study number {i}", "year": 2000 + i}
+        for i in range(MAX_EXPLORE_PER_PAPER + 6)
+    ]
+    tree = build_exploration_tree([_entry("Citing", "10.1/citing", references=refs)], QUESTIONS)
+    paper = tree["papers"][0]
+    assert len(paper["to_explore"]) == MAX_EXPLORE_PER_PAPER
+    assert paper["to_explore_total"] == MAX_EXPLORE_PER_PAPER + 6
+
+
+def test_build_exploration_tree_dedupes_a_reference_listed_twice():
+    entries = [
+        _entry("Citing", "10.1/citing", references=[
+            {"doi": "10.9/x", "title": "Adolescent sleep patterns", "year": 2000},
+            {"doi": "10.9/x", "title": "Adolescent sleep patterns (dup)", "year": 2000},
+        ])
+    ]
+    assert tree_total(build_exploration_tree(entries, QUESTIONS)) == 1
+
+
+def tree_total(tree):
+    return tree["papers"][0]["to_explore_total"]
+
+
+def test_gap_relevance_matches_across_a_hyphenated_compound():
+    """"risk-taking" in a question has to match "Risk" in a title — without
+    splitting the compound it never does."""
+    assert gap_relevance("Development and Risk", ["Does sleep loss increase risk-taking?"]) > 0

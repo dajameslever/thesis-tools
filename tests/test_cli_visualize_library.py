@@ -411,3 +411,60 @@ def test_visualize_library_reuses_project_research_question(tmp_path):
     assert rc == 0
     html = output_path.read_text(encoding="utf-8")
     assert "low relevance to your research question" in html
+
+
+def _citing_index(index_path, refs):
+    entry = LibraryEntry(
+        file_path="a.pdf",
+        file_hash="hash-a",
+        file_type="pdf",
+        size_bytes=100,
+        indexed_at="2026-01-01T00:00:00",
+        confidence="verified-doi",
+        doi="10.1/a",
+        paper=Paper(title="Sleep deprivation in adolescents", doi="10.1/a", year=2023, sources=["crossref"]),
+        references=refs,
+    )
+    LibraryIndex([entry]).save(index_path)
+
+
+def test_visualize_library_filters_off_topic_citations_by_default(tmp_path):
+    index_path = tmp_path / "library" / "index.json"
+    output_path = tmp_path / "library" / "visualization.html"
+    _citing_index(index_path, [
+        {"doi": "10.9/coffee", "title": "Coffee bean price volatility in Brazil", "year": 2018},
+        {"doi": "10.9/sleep", "title": "Adolescent sleep and school schedules", "year": 2005},
+    ])
+
+    rc = main([
+        "visualize-library",
+        "--index-path", str(index_path),
+        "--output", str(output_path),
+        "--project-file", str(tmp_path / "project.json"),
+        "--question", "Does sleep deprivation affect adolescent decision-making?",
+    ])
+
+    assert rc == 0
+    html = output_path.read_text(encoding="utf-8")
+    assert "Adolescent sleep and school schedules" in html
+    assert "Coffee bean price volatility in Brazil" not in html
+
+
+def test_visualize_library_min_gap_relevance_zero_keeps_everything(tmp_path):
+    index_path = tmp_path / "library" / "index.json"
+    output_path = tmp_path / "library" / "visualization.html"
+    _citing_index(index_path, [
+        {"doi": "10.9/coffee", "title": "Coffee bean price volatility in Brazil", "year": 2018},
+    ])
+
+    rc = main([
+        "visualize-library",
+        "--index-path", str(index_path),
+        "--output", str(output_path),
+        "--project-file", str(tmp_path / "project.json"),
+        "--question", "Does sleep deprivation affect adolescent decision-making?",
+        "--min-gap-relevance", "0",
+    ])
+
+    assert rc == 0
+    assert "Coffee bean price volatility in Brazil" in output_path.read_text(encoding="utf-8")

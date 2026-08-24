@@ -8,13 +8,23 @@ data — no network calls — so it's cheap to rebuild on every report.
 
 from __future__ import annotations
 
-from typing import Dict, List
+from typing import Dict, List, Optional, Tuple
 
+from ..relevance import tokenize
 from ..sources.base import normalize_title
 from .index_store import LibraryEntry
 
 MAX_MISSING_NODES = 15
 MIN_CITING_COUNT_FOR_GAP = 2  # only surface references cited by 2+ of your papers
+
+# A missing reference is known only by its title — there is no abstract to
+# score against — so relevance here is "what share of this title's meaningful
+# words are words you are actually asking about". Normalising by the title
+# (rather than by the question, as score_relevance does) keeps the measure
+# stable as you add sub-questions: otherwise every suggestion would look less
+# relevant simply because the question set grew.
+DEFAULT_MIN_GAP_RELEVANCE = 0.1
+_STEM_PREFIX_LEN = 5
 
 
 def indexed_dois(entries: List[LibraryEntry]) -> set:
@@ -264,4 +274,200 @@ def build_internal_links(entries: List[LibraryEntry]) -> dict:
         "links": links,
         "connected_count": connected,
         "isolated_count": len(papers) - connected,
+    }
+
+
+def _stems(text: str) -> set:
+    """Crude, dependency-free stemming: a long word is represented by its
+    first few characters, so "sleepiness" matches "sleep" and "adolescents"
+    matches "adolescent". Nowhere near a real stemmer, but the alternative —
+    exact token equality — misses most of the morphological variation between
+    how a question is phrased and how a paper title is."""
+    stems = set()
+    for token in tokenize(text):
+        # A hyphenated compound is two words for matching purposes: without
+        # this, "risk-taking" in a question never matches "Risk" in a title.
+        for part in token.split("-"):
+            if len(part) > 2:
+                stems.add(part[:_STEM_PREFIX_LEN] if len(part) > _STEM_PREFIX_LEN else part)
+    return stems
+
+
+def question_term_weights(questions: List[str]) -> Dict[str, float]:
+    """How central each term is across the question set: a word you ask about
+    in three of four questions carries more weight than one that appears once.
+
+    This is what lets a title-only match distinguish a real hit from an
+    incidental one. Scoring against the questions concatenated into a single
+    blob cannot: "Measuring Sleepiness" matching *sleep* and "Urban Planning
+    and Commute Times" matching *times* both come out as one-word-in-four,
+    even though only one of them is on-topic.
+    """
+    present = [q for q in questions if (q or "").strip()]
+    if not present:
+        return {}
+    counts: Dict[str, float] = {}
+    for question in present:
+        for stem in _stems(question):
+            counts[stem] = counts.get(stem, 0.0) + 1.0
+    # Normalised against the most-repeated term, not the number of questions:
+    # dividing by the question count would shrink every score as the question
+    # set grew, so a fixed threshold would quietly get stricter each time a
+    # sub-question was added. Against the peak, the scale stays put and the
+    # weights keep saying what they should — how central a term is *relative
+    # to the others you ask about*.
+    peak = max(counts.values())
+    return {stem: count / peak for stem, count in counts.items()}
+
+
+def gap_relevance(title: str, questions: List[str]) -> float:
+    """How on-topic a cited-but-missing work's title looks, in [0, 1].
+
+    A missing reference is known only by its title — there is no abstract to
+    score against — so this is "what share of this title's meaningful words
+    are words you actually ask about, weighted by how central each is".
+    Normalising by the title rather than by the question (as score_relevance
+    does) keeps the measure stable as you add sub-questions; otherwise every
+    suggestion would look less relevant simply because the question set grew.
+
+    Returns 0.0 when there is nothing to score against, so callers can treat
+    "no question configured" as "do not filter" rather than "nothing is
+    relevant".
+    """
+    weights = question_term_weights(questions)
+    title_stems = _stems(title or "")
+    if not weights or not title_stems:
+        return 0.0
+    matched = sum(weights.get(stem, 0.0) for stem in title_stems)
+    return round(matched / len(title_stems), 4)
+
+
+def split_by_relevance(
+    works: List[dict],
+    questions: List[str],
+    min_relevance: float = DEFAULT_MIN_GAP_RELEVANCE,
+) -> Tuple[List[dict], List[dict]]:
+    """Split cited-but-missing works into (on-topic, off-topic) against the
+    questions being asked, each annotated with its score, best first.
+
+    Suggesting whatever your papers happen to cite most is how a reading list
+    fills up with well-cited work that has nothing to do with your thesis —
+    methods papers, a co-author's unrelated output, a field's ambient
+    classics. Deliberately a *split* rather than a drop: a title-only keyword
+    match will sometimes misjudge a genuinely relevant work, so the off-topic
+    side stays available rather than disappearing.
+
+    With no question configured there is nothing to score against, so
+    everything comes back on-topic and nothing is hidden.
+    """
+    scored = []
+    for work in works:
+        annotated = dict(work)
+        annotated["relevance"] = gap_relevance(work.get("title") or "", questions)
+        scored.append(annotated)
+
+    def sort_key(w: dict) -> tuple:
+        return (w["relevance"], len(w.get("cited_by") or []))
+
+    if not any((q or "").strip() for q in questions):
+        scored.sort(key=sort_key, reverse=True)
+        return scored, []
+
+    on_topic = sorted((w for w in scored if w["relevance"] >= min_relevance), key=sort_key, reverse=True)
+    off_topic = sorted((w for w in scored if w["relevance"] < min_relevance), key=sort_key, reverse=True)
+    return on_topic, off_topic
+
+
+# Per paper, in the expandable tree. A single paper's reference list can run
+# to a hundred entries; the point of the branch is "is there anything here
+# worth chasing", not to reproduce the bibliography.
+MAX_EXPLORE_PER_PAPER = 12
+
+
+def build_exploration_tree(
+    entries: List[LibraryEntry],
+    questions: Optional[List[str]] = None,
+    min_relevance: float = DEFAULT_MIN_GAP_RELEVANCE,
+) -> dict:
+    """Your library as an expandable route outward: for each indexed paper,
+    what it cites that you already have, and — the point of the view — what
+    it cites that you have *not* imported yet and might read next.
+
+    Papers are ordered by how much unexplored on-topic work they lead to, so
+    the paper that opens the most doors is the first branch, not whichever
+    happened to be indexed first.
+    """
+    questions = [q for q in (questions or []) if (q or "").strip()]
+    known_dois = indexed_dois(entries)
+    title_to_entry = {normalize_title(e.paper.title): e for e in entries}
+
+    # How many of your own papers cite each missing work — the "several of
+    # your sources lean on this" signal, kept alongside per-paper relevance.
+    citing_counts: Dict[str, int] = {}
+    for entry in entries:
+        for ref in entry.references:
+            key = (ref.get("doi") or "").strip().lower() or normalize_title(ref.get("title") or "")
+            if key:
+                citing_counts[key] = citing_counts.get(key, 0) + 1
+
+    papers: List[dict] = []
+    distinct_to_explore: Dict[str, dict] = {}
+    distinct_off_topic: Dict[str, dict] = {}
+
+    for entry in entries:
+        in_library: List[dict] = []
+        candidates: List[dict] = []
+        seen_keys = set()
+
+        for ref in entry.references:
+            doi = (ref.get("doi") or "").strip().lower()
+            title = ref.get("title") or ""
+            key = doi or normalize_title(title)
+            if not key or key in seen_keys:
+                continue
+            seen_keys.add(key)
+
+            if (doi and doi in known_dois) or (not doi and normalize_title(title) in title_to_entry):
+                held = title_to_entry.get(normalize_title(title))
+                in_library.append(
+                    {"title": held.paper.title if held else title, "year": ref.get("year"), "doi": ref.get("doi")}
+                )
+                continue
+            candidates.append(
+                {
+                    "title": title,
+                    "year": ref.get("year"),
+                    "doi": ref.get("doi"),
+                    "cited_by_count": citing_counts.get(key, 1),
+                    "_key": key,
+                }
+            )
+
+        on_topic, off_topic = split_by_relevance(candidates, questions, min_relevance)
+        for work in on_topic:
+            distinct_to_explore.setdefault(work["_key"], work)
+        for work in off_topic:
+            distinct_off_topic.setdefault(work["_key"], work)
+
+        papers.append(
+            {
+                "title": entry.paper.title,
+                "year": entry.paper.year,
+                "doi": entry.doi or entry.paper.doi,
+                "confidence": entry.confidence,
+                "in_library": sorted(in_library, key=lambda w: (w["year"] or 0, w["title"] or "")),
+                "to_explore": on_topic[:MAX_EXPLORE_PER_PAPER],
+                "to_explore_total": len(on_topic),
+                "off_topic_count": len(off_topic),
+            }
+        )
+
+    papers.sort(key=lambda p: (p["to_explore_total"], len(p["in_library"]), p["title"] or ""), reverse=True)
+
+    return {
+        "papers": papers,
+        "distinct_to_explore": len(distinct_to_explore),
+        "distinct_off_topic": len(distinct_off_topic),
+        "questions_configured": bool(questions),
+        "min_relevance": min_relevance,
     }

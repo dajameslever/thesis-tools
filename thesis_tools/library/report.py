@@ -9,7 +9,7 @@ from ..citations import format_citation
 from ..links import google_scholar_search_url, sciencedirect_search_url
 from ..recency import newest_year, recency_label
 from ..subquestions import SubquestionAnalysis
-from .citation_graph import build_coverage, build_mermaid_mindmap, indexed_dois
+from .citation_graph import build_coverage, build_mermaid_mindmap, indexed_dois, split_by_relevance
 from .index_store import LibraryIndex
 
 _STANCE_ICONS = {"supports": "✅", "challenges": "❌", "mixed": "⚖️", "unrelated": "·"}
@@ -92,17 +92,31 @@ def build_library_report(
             f"**{coverage['missing_references']}** aren't (many will be older, foundational papers)."
         )
         lines.append("")
-        if coverage["frequently_missing"]:
+        # Same relevance split the HTML visualization applies, so the two do
+        # not recommend different reading lists off one index. Suggesting
+        # whatever gets cited most fills a reading list with well-cited work
+        # that has nothing to do with the thesis.
+        questions = [q for q in ([research_question] + list(subquestion_analysis.sub_questions if subquestion_analysis else [])) if q]
+        on_topic_gaps, off_topic_gaps = split_by_relevance(coverage["frequently_missing"], questions)
+        if on_topic_gaps:
             lines.append("**Recurring gaps** — cited by 2+ of your papers but not yet in your library:")
             lines.append("")
-            for gap in coverage["frequently_missing"]:
+            for gap in on_topic_gaps:
                 label = recency_label(gap["year"], newest_year_in_set=newest)
                 lines.append(f"- \"{gap['title']}\" — {label} — cited by {len(gap['cited_by'])}: {', '.join(gap['cited_by'])}")
                 lines.append(f"  {_deep_search_lines(gap['title'])}")
             lines.append("")
             lines.append("```mermaid")
-            lines.append(build_mermaid_mindmap(index.entries, coverage))
+            lines.append(build_mermaid_mindmap(index.entries, {"frequently_missing": on_topic_gaps}))
             lines.append("```")
+            lines.append("")
+        if off_topic_gaps:
+            lines.append(
+                f"_{len(off_topic_gaps)} further recurring gap(s) scored off-topic against your "
+                "question(s) and are left out above: "
+                + ", ".join(f'"{g["title"]}"' for g in off_topic_gaps)
+                + "._"
+            )
             lines.append("")
 
     if subquestion_analysis and subquestion_analysis.sub_questions:

@@ -385,6 +385,15 @@ instead of the heuristic):
   graph, which turned a few dozen papers into an unreadable hairball whose
   shape changed every run; an arc diagram fixes the papers on a meaningful
   axis, so the layout is deterministic and labels can't collide.)
+- **Where to explore next** — a mind-map tree of where to go from what you
+  already have. Every paper is a collapsed branch showing how many works it
+  cites that you haven't imported; expand one to see them, each with a
+  direct DOI link when one's known plus Google Scholar / ScienceDirect
+  search links, alongside the works it cites that you *do* already hold.
+  Branches are ordered by how much unexplored work each paper opens up, so
+  the paper that leads furthest is first. Built from nested `<details>`, so
+  expanding works with no JavaScript, from the keyboard, and in a screen
+  reader — and a paper citing eighty works costs nothing until you open it.
 - **Papers worth adding next** — the works your own papers cite that you
   *don't* have, ranked by how many of your papers cite each one, since
   something several of your sources lean on is usually foundational. Each
@@ -392,6 +401,32 @@ instead of the heuristic):
   and ScienceDirect search links as a fallback — the same deep-search
   pattern used for "Needs manual review" — so you can track one down in one
   click instead of retyping the title. Needs `--fetch-references`.
+
+**Suggestions are filtered to your questions.** Recommending whatever your
+papers happen to cite most is how a reading list fills up with well-cited
+work that has nothing to do with your thesis — a co-author's unrelated
+output, methods papers, the field's ambient classics. Every cited-but-missing
+work is scored against your research question and sub-questions, and only
+the on-topic ones are suggested (in the mind-map, the ranked list, *and*
+Part 2's Markdown report, so the two never recommend different reading
+lists).
+
+A missing reference is known only by its title, so the score asks "what
+share of this title's meaningful words are words you actually ask about",
+weighting each by how central it is across your question set — a word you
+ask about in three of four questions counts for more than one that appears
+once. That's what separates a real match from an incidental one: *Measuring
+Sleepiness: The Stanford Scale* and *Urban Planning and Commute Times* both
+match exactly one word in four against a set of sleep questions, but only
+one of them is on topic.
+
+Because a title-only match will sometimes misjudge something genuinely
+relevant, filtering is a **split, not a drop** — whatever's held back stays
+one click away under "Show the N held back as off-topic", so you can spot a
+false negative. Tune the bar with `--min-gap-relevance` (0–1, default 0.1),
+or pass `--min-gap-relevance 0` to suggest everything regardless of topic.
+With no question or sub-questions configured there's nothing to score
+against, so nothing is filtered.
 - **Where your metadata came from** — a bar chart of how many papers were
   verified via each source (Crossref, Semantic Scholar, OpenAlex, arXiv) vs.
   resolved from local file metadata alone.

@@ -22,7 +22,13 @@ from ..links import doi_url, google_scholar_search_url, sciencedirect_search_url
 from ..recency import DEFAULT_OLD_THRESHOLD_YEARS, age_years, newest_year
 from ..relevance import score_relevance
 from ..subquestions import SubquestionAnalysis, analyze_subquestions
-from .citation_graph import build_coverage, build_internal_links
+from .citation_graph import (
+    DEFAULT_MIN_GAP_RELEVANCE,
+    build_coverage,
+    build_exploration_tree,
+    build_internal_links,
+    split_by_relevance,
+)
 from .index_store import LibraryEntry, LibraryIndex
 from .literature_matrix import build_literature_matrix_workbook
 
@@ -97,6 +103,7 @@ def compute_stats(
     llm_model: str = llm.DEFAULT_EXTRACTION_MODEL,
     research_question: Optional[str] = None,
     stance_cache_path: Optional[str] = None,
+    min_gap_relevance: float = DEFAULT_MIN_GAP_RELEVANCE,
 ) -> dict:
     """Pure computation over an already-loaded index — no I/O, easy to unit
     test independently of the HTML it ends up rendered into.
@@ -117,6 +124,7 @@ def compute_stats(
     to regenerate any time" promise even with --llm-summaries on."""
     entries = index.entries
     total = len(entries)
+    sub_questions = sub_questions or []
 
     by_confidence: Dict[str, int] = {}
     by_source: Dict[str, int] = {}
@@ -145,7 +153,16 @@ def compute_stats(
     references_fetched = any(e.references for e in entries)
     internal_links = build_internal_links(entries)
 
-    sub_questions = sub_questions or []
+    # Everything the library cites but does not hold, scored against the
+    # questions being asked. `questions` is the research question plus each
+    # sub-question kept separate, not concatenated — see
+    # citation_graph.question_term_weights for why that matters.
+    questions = [q for q in ([research_question] + list(sub_questions or [])) if q]
+    exploration = build_exploration_tree(entries, questions, min_gap_relevance)
+    relevant_gaps, off_topic_gaps = split_by_relevance(
+        coverage["frequently_missing"], questions, min_gap_relevance
+    )
+
     subquestion_coverage: List[dict] = []
     analysis: Optional[SubquestionAnalysis] = None
     if sub_questions:
@@ -226,6 +243,10 @@ def compute_stats(
         "unresolved_entries": unresolved_entries,
         "coverage": coverage,
         "internal_links": internal_links,
+        "exploration": exploration,
+        "relevant_gaps": relevant_gaps,
+        "off_topic_gaps": off_topic_gaps,
+        "min_gap_relevance": min_gap_relevance,
         "references_fetched": references_fetched,
         "sub_questions": sub_questions,
         "subquestion_coverage": subquestion_coverage,
@@ -647,6 +668,28 @@ table.viz-table th { color: var(--viz-text-secondary); font-weight: 600; }
 .viz-relbar-value { font-size: 0.75rem; color: var(--viz-text-secondary); font-variant-numeric: tabular-nums; margin-left: 6px; }
 .viz-relbar { display: flex; align-items: center; }
 .viz-qkey { margin: 14px 0 0; padding-left: 20px; font-size: 0.85rem; color: var(--viz-text-secondary); }
+.viz-tree { margin: 4px 0 0; }
+.viz-branch { border-left: 2px solid var(--viz-border); padding: 0 0 0 12px; margin: 0 0 4px; }
+.viz-branch > summary { cursor: pointer; padding: 5px 4px; list-style: none; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; border-radius: 4px; }
+.viz-branch > summary::-webkit-details-marker { display: none; }
+/* Drawn with borders rather than a glyph: a font that lacks the triangle
+   character renders tofu, and tofu inside a flex row also breaks the
+   alignment of everything beside it. */
+.viz-branch > summary::before { content: ""; flex: 0 0 auto; width: 0; height: 0; margin-right: 2px;
+  border-left: 5px solid var(--viz-muted); border-top: 4px solid transparent; border-bottom: 4px solid transparent;
+  transition: transform 0.12s; }
+.viz-branch[open] > summary::before { transform: rotate(90deg); }
+.viz-branch > summary:hover { background: var(--viz-accent-soft); border-radius: 4px; }
+.viz-branch-body { padding: 2px 0 10px 12px; }
+.viz-branch-label { font-size: 0.8rem; font-weight: 600; color: var(--viz-text-secondary); margin: 8px 0 4px; }
+.viz-explore-title { color: var(--viz-text-primary); }
+.viz-explore-list { margin: 0; padding-left: 18px; font-size: 0.85rem; color: var(--viz-text-secondary); }
+.viz-explore-list li { margin-bottom: 4px; }
+.viz-explore-held .viz-explore-title { color: var(--viz-text-secondary); }
+.viz-explore-links { font-size: 0.78rem; white-space: nowrap; }
+.viz-badge { display: inline-block; font-size: 0.72rem; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--viz-border); color: var(--viz-text-secondary); white-space: nowrap; }
+.viz-badge-accent { background: var(--viz-accent-soft); border-color: transparent; color: var(--viz-text-primary); }
+.viz-badge-quiet { color: var(--viz-muted); }
 .viz-details { margin-top: 14px; font-size: 0.85rem; }
 .viz-details summary { cursor: pointer; color: var(--viz-text-secondary); }
 .viz-sr { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
@@ -765,6 +808,9 @@ def render_html(stats: dict, matrix_filename: Optional[str] = None) -> str:
 
         <h2>How your papers connect</h2>
         {_render_connections_section(stats)}
+
+        <h2>Where to explore next</h2>
+        {_render_exploration_section(stats)}
 
         <h2>Papers worth adding next</h2>
         {_render_papers_to_consider_section(stats)}
@@ -1024,8 +1070,8 @@ def _render_papers_to_consider_section(stats: dict) -> str:
     own papers cite but that you do not have. A ranked bar is the right form
     for it — the question is purely one of magnitude ("how many of mine cite
     this?"), which a network node's size answers far less legibly."""
-    coverage = stats["coverage"]
-    gaps = coverage["frequently_missing"]
+    gaps = stats["relevant_gaps"]
+    off_topic = stats["off_topic_gaps"]
 
     if not stats["references_fetched"]:
         return (
@@ -1033,27 +1079,178 @@ def _render_papers_to_consider_section(stats: dict) -> str:
             "<code>index-library --fetch-references</code> to see which works your papers keep citing "
             "that you do not have.</p></div>"
         )
-    if not gaps:
+    if not gaps and not off_topic:
         return (
             '<div class="viz-section"><p class="viz-none">No work is cited by two or more of your papers '
             "without already being in your library — nothing obvious to add next.</p></div>"
         )
+    if not gaps:
+        return (
+            f'<div class="viz-section"><p class="viz-none">All {len(off_topic)} recurring gap(s) scored '
+            "off-topic against your questions — nothing here looks worth adding on this topic.</p>"
+            f"{_off_topic_details(off_topic)}</div>"
+        )
 
+    # Relevance is the filter here, not the ranking: the question this
+    # section answers is "which of these is most foundational", which is the
+    # citation count. A bar chart whose bars are not in length order is
+    # unreadable regardless of what it was sorted by.
+    gaps = sorted(gaps, key=lambda g: len(g["cited_by"]), reverse=True)
     rows = []
     for gap in gaps:
         year = " ({})".format(gap["year"]) if gap.get("year") else ""
         rows.append(((gap["title"] or "Untitled") + year, len(gap["cited_by"]), "var(--viz-accent)"))
     chart = _bar_chart_svg(rows, width=700, label_width=330, bar_height=22, gap=8)
     cited_total = sum(len(g["cited_by"]) for g in gaps)
+    filtered = (
+        f" A further <strong>{len(off_topic)}</strong> scored off-topic against your questions and "
+        "are held back rather than padding the list."
+        if off_topic
+        else ""
+    )
 
     return f"""
     <div class="viz-section">
       <p class="viz-lede">Works your own papers cite that are <em>not</em> in your library yet, ranked by how
       many of your papers cite each one — a work several of your sources lean on is usually foundational.
-      <strong>{len(gaps)}</strong> such work(s), accounting for <strong>{cited_total}</strong> citation(s)
-      from across your library.</p>
+      <strong>{len(gaps)}</strong> such work(s) are on-topic for your questions, accounting for
+      <strong>{cited_total}</strong> citation(s) from across your library.{filtered}</p>
       {chart}
       {_frequently_missing_table(gaps)}
+      {_off_topic_details(off_topic)}
+    </div>
+    """
+
+
+def _off_topic_details(off_topic: List[dict]) -> str:
+    """Filtered-out suggestions stay one click away rather than vanishing —
+    a title-only keyword match will occasionally misjudge something genuinely
+    relevant, and a silent drop gives no way to notice."""
+    if not off_topic:
+        return ""
+    items = "".join(
+        f'<li><span class="viz-explore-title">{_esc(g["title"])}</span>'
+        + (f' <span class="viz-grid-year">{_esc(g["year"])}</span>' if g.get("year") else "")
+        + f' <span class="viz-badge viz-badge-quiet">relevance {g["relevance"]:.2f}</span> '
+        + f'<span class="viz-explore-links">{_find_it_links_html(g["title"], g.get("doi"))}</span></li>'
+        for g in off_topic
+    )
+    return (
+        f'<details class="viz-details"><summary>Show the {len(off_topic)} held back as off-topic</summary>'
+        f'<ul class="viz-explore-list">{items}</ul></details>'
+    )
+
+
+def _work_links_html(work: dict) -> str:
+    return _find_it_links_html(work.get("title") or "", work.get("doi"))
+
+
+def _explore_item_html(work: dict, show_relevance: bool) -> str:
+    year = f' <span class="viz-grid-year">{_esc(work["year"])}</span>' if work.get("year") else ""
+    badges = []
+    cited_by = work.get("cited_by_count") or 1
+    if cited_by > 1:
+        badges.append(f'<span class="viz-badge">cited by {cited_by} of yours</span>')
+    if show_relevance and work.get("relevance") is not None:
+        badges.append(f'<span class="viz-badge viz-badge-quiet">relevance {work["relevance"]:.2f}</span>')
+    return (
+        f'<li><span class="viz-explore-title">{_esc(work.get("title") or "Untitled")}</span>{year} '
+        f'{"".join(badges)} <span class="viz-explore-links">{_work_links_html(work)}</span></li>'
+    )
+
+
+def _render_exploration_section(stats: dict) -> str:
+    """The mind-map: your library at the root, each paper a branch, and under
+    each branch the works it cites — the ones you already hold, and the ones
+    you have not imported yet.
+
+    Built from nested <details>, not a drawn tree, so expanding is native
+    (works with no JS, keyboard, and screen readers), branches can be opened
+    one at a time instead of all competing for space at once, and a paper
+    citing eighty works costs nothing until you actually open it.
+    """
+    exploration = stats["exploration"]
+    papers = exploration["papers"]
+
+    if not stats["references_fetched"]:
+        return (
+            '<div class="viz-section"><p class="viz-muted">No reference lists fetched yet — re-run '
+            "<code>index-library --fetch-references</code> to build this view.</p></div>"
+        )
+
+    with_route = [p for p in papers if p["to_explore_total"]]
+    if not with_route and not exploration["distinct_off_topic"]:
+        return (
+            '<div class="viz-section"><p class="viz-none">Every work your papers cite is already in your '
+            "library — no unexplored route from here.</p></div>"
+        )
+
+    show_relevance = exploration["questions_configured"]
+    branches = []
+    for paper in papers:
+        if not (paper["to_explore_total"] or paper["in_library"]):
+            continue
+        year = f' <span class="viz-grid-year">{_esc(paper["year"])}</span>' if paper["year"] else ""
+        counts = []
+        if paper["to_explore_total"]:
+            counts.append(f'<span class="viz-badge viz-badge-accent">{paper["to_explore_total"]} to explore</span>')
+        if paper["in_library"]:
+            counts.append(f'<span class="viz-badge viz-badge-quiet">{len(paper["in_library"])} already held</span>')
+
+        body = []
+        if paper["to_explore_total"]:
+            shown = "".join(_explore_item_html(w, show_relevance) for w in paper["to_explore"])
+            rest = paper["to_explore_total"] - len(paper["to_explore"])
+            more = f'<li class="viz-muted">…and {rest} more</li>' if rest > 0 else ""
+            body.append(
+                '<p class="viz-branch-label">Cites, not in your library — worth a look</p>'
+                f'<ul class="viz-explore-list">{shown}{more}</ul>'
+            )
+        if paper["in_library"]:
+            held = "".join(
+                f'<li><span class="viz-explore-title">{_esc(w["title"])}</span>'
+                + (f' <span class="viz-grid-year">{_esc(w["year"])}</span>' if w.get("year") else "")
+                + "</li>"
+                for w in paper["in_library"]
+            )
+            body.append(
+                '<p class="viz-branch-label">Cites, already in your library</p>'
+                f'<ul class="viz-explore-list viz-explore-held">{held}</ul>'
+            )
+        if paper["off_topic_count"]:
+            body.append(
+                f'<p class="viz-muted">{paper["off_topic_count"]} further cited work(s) scored off-topic '
+                "for your questions and are not listed here.</p>"
+            )
+
+        branches.append(
+            '<details class="viz-branch"><summary>'
+            f'<span class="viz-explore-title">{_esc(paper["title"])}</span>{year} {"".join(counts)}'
+            f'</summary><div class="viz-branch-body">{"".join(body)}</div></details>'
+        )
+
+    filtered_note = ""
+    if show_relevance and exploration["distinct_off_topic"]:
+        filtered_note = (
+            f'<p class="viz-muted">{exploration["distinct_off_topic"]} distinct cited work(s) scored below '
+            f'{exploration["min_relevance"]:.2f} against your questions and are left out of the branches above — '
+            "raise or lower the bar with <code>--min-gap-relevance</code>, or set it to <code>0</code> to keep "
+            "everything.</p>"
+        )
+    elif not show_relevance:
+        filtered_note = (
+            '<p class="viz-muted">No research question or sub-questions configured, so nothing is filtered — '
+            "set them and re-run to keep off-topic citations out of this route.</p>"
+        )
+
+    return f"""
+    <div class="viz-section">
+      <p class="viz-lede">Where to go next from what you already have. Expand a paper to see what it cites:
+      the works you have not imported yet — your exploration route —
+      {"and " if show_relevance else ""}the ones already in your library.
+      <strong>{exploration['distinct_to_explore']}</strong> distinct work(s) are cited but not imported.</p>
+      <div class="viz-tree">{''.join(branches)}</div>
+      {filtered_note}
     </div>
     """
 
@@ -1181,6 +1378,7 @@ def build_visualization_html(
     research_question: Optional[str] = None,
     stance_cache_path: Optional[str] = None,
     matrix_filename: Optional[str] = None,
+    min_gap_relevance: float = DEFAULT_MIN_GAP_RELEVANCE,
 ) -> str:
     """Convenience entry point used by the CLI: compute + render in one call."""
     return render_html(
@@ -1191,6 +1389,7 @@ def build_visualization_html(
             llm_model=llm_model,
             research_question=research_question,
             stance_cache_path=stance_cache_path,
+            min_gap_relevance=min_gap_relevance,
         ),
         matrix_filename=matrix_filename,
     )
