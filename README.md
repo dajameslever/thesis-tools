@@ -789,37 +789,46 @@ formatters** built from whatever metadata the free APIs return — always
 sanity-check the generated bibliography against your university's exact
 style requirements before submitting.
 
-### Nothing you have produced is overwritten
+### Living views vs. kept outputs
 
-Some outputs are timestamped and pile up on their own (Part 1's report,
-Part 3's draft). Others are written to a fixed name on purpose — the
-library visualization, the Excel matrix, the library report — because that
-name is what your bookmark, your open browser tab, and the page's own
+Two kinds of file, two different rules.
+
+**Living views** — `library/visualization.html`, `library/literature_matrix.xlsx`,
+`library/library.md`. These describe your library *as it stands right now*,
+so re-running after adding papers is meant to replace them: an old snapshot
+of a library you have since changed isn't history, it's a stale picture of
+something that no longer exists. They're overwritten in place, and their
+fixed names are what your bookmark, your open tab and the page's own
 download link all point at.
 
-Those fixed-name files are no longer replaced in place. Before a new one is
-written, the existing file is moved into a `previous/` folder beside it,
-stamped with **its own** modification time — when it was produced, not when
-it was displaced — so the folder reads as a history of your runs:
+**Outputs** — everything under `output/`: Part 1's report, Part 3's review,
+executive summary and detailed summary, and the HTML beside each. These are
+documents you produced at a moment in time, and you'll want to compare
+today's draft against last week's. They're kept.
+
+Most already carry a timestamp in the filename and pile up on their own:
 
 ```
-library/
-  visualization.html                              <- always the newest
-  literature_matrix.xlsx
-  previous/
-    visualization-20260824-165223.html
-    visualization-20260824-191555.html
-    literature_matrix-20260824-165223.xlsx
+output/
+  literature-review-20260824-165223.md
+  literature-review-20260825-080928.md
+  executive-summary-20260825-080928.md
+  detailed-summary-20260825-081402.md
 ```
 
-The canonical path never moves, so nothing you have linked or bookmarked
-breaks. This covers reports and deliverables only — `index.json`, the stance
-cache, the extracted `.txt` files and downloaded PDFs are state and caches,
-meant to be rewritten in place, and archiving every version of them would
-bury the real history in noise. If filing the old copy away fails (a
-read-only folder, say), the run says so and still writes the new output:
-losing this run's work because last run's could not be archived would be the
-worse outcome.
+The one case that needs help is reusing an explicit `-o path` across runs —
+that names one fixed file, and writing it again would destroy the earlier
+version. Instead the existing file moves into a `previous/` folder beside
+it, stamped with **its own** modification time (when it was produced, not
+when it was displaced), so the folder reads as a history of runs. The path
+you named keeps pointing at the newest.
+
+Neither rule applies to state and caches — `index.json`, the stance cache,
+the extracted `.txt` files, downloaded PDFs. Those are meant to be rewritten
+in place, and versioning every one would bury the real history in noise. If
+filing an old copy away ever fails (a read-only folder, say), the run says
+so and still writes the new output: losing this run's work because last
+run's couldn't be archived would be the worse outcome.
 
 ## Project layout
 
@@ -839,8 +848,8 @@ thesis_tools/
   subquestions.py     Sub-question generation + supports/challenges/mixed stance analysis
   stance_cache.py     Persists analyze_subquestions()'s per-paper Claude classifications so an
                       unchanged paper/question set is never reclassified (used by visualize-library)
-  outputs.py          Rotates a deliverable into `previous/` before writing a new one, so no
-                      run ever destroys what the last one produced
+  outputs.py          Keeps the previous version of anything in output/ when a fixed path is
+                      reused (library views stay living and are overwritten in place)
   review_html.py      Renders Part 3's draft as a self-contained HTML page
   citations.py        APA / MLA / Chicago / Harvard / IEEE reference-list formatting, plus
                       in_text_citation() for the parenthetical/numbered marker used inline

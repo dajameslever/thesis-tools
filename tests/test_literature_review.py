@@ -1224,3 +1224,40 @@ def test_detailed_summaries_get_their_own_default_filename():
     from thesis_tools.literature_review import _default_output_path
 
     assert _default_output_path("detailed").name.startswith("detailed-summary-")
+
+
+@patch("thesis_tools.llm.get_client")
+@patch("thesis_tools.llm.ask")
+def test_reusing_the_same_output_path_keeps_the_earlier_draft(mock_ask, mock_get_client, tmp_path):
+    """Everything under output/ is a document produced at a moment in time —
+    you will want today's against last week's. Default names carry a
+    timestamp and accumulate on their own; an explicit -o names one fixed
+    file, and that is the case that needs help."""
+    mock_get_client.return_value = object()
+
+    for run in range(3):
+        mock_ask.side_effect = _ask_for_review()
+        run_literature_review(
+            _review_inputs(tmp_path, _two_sided_source(tmp_path), output_path=str(tmp_path / "draft.md"))
+        )
+
+    kept = sorted(p.name for p in (tmp_path / "previous").iterdir())
+    assert len(kept) == 4  # two earlier runs, each as .md and .html
+    assert all(name.startswith("draft-") for name in kept)
+    assert sum(name.endswith(".html") for name in kept) == 2
+    assert (tmp_path / "draft.md").is_file()  # the path you named still points at the newest
+
+
+@patch("thesis_tools.llm.get_client")
+@patch("thesis_tools.llm.ask")
+def test_default_timestamped_names_never_collide_in_the_first_place(mock_ask, mock_get_client, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    mock_get_client.return_value = object()
+    mock_ask.side_effect = _ask_for_review()
+
+    inputs = _review_inputs(tmp_path, _two_sided_source(tmp_path))
+    inputs.output_path = None
+    path = Path(run_literature_review(inputs))
+
+    assert path.parent.name == "output"
+    assert not (path.parent / "previous").exists()

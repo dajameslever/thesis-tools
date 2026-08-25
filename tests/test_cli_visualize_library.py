@@ -468,3 +468,41 @@ def test_visualize_library_min_gap_relevance_zero_keeps_everything(tmp_path):
 
     assert rc == 0
     assert "Coffee bean price volatility in Brazil" in output_path.read_text(encoding="utf-8")
+
+
+def _one_paper_index(index_path):
+    index = LibraryIndex(
+        [
+            LibraryEntry(
+                file_path="a.pdf",
+                file_hash="hash-a",
+                file_type="pdf",
+                size_bytes=100,
+                indexed_at="2026-01-01T00:00:00",
+                confidence="verified-doi",
+                doi="10.1/a",
+                paper=Paper(title="A Paper", doi="10.1/a", year=2023, sources=["crossref"]),
+            )
+        ]
+    )
+    index.save(index_path)
+    return index_path
+
+
+def test_the_visualization_is_a_living_view_not_a_versioned_one(tmp_path):
+    """It describes the library as it stands now. An old snapshot of a
+    library you have since changed is not history — it is a stale picture of
+    something that no longer exists."""
+    index_path = _one_paper_index(tmp_path / "library" / "index.json")
+    output_path = tmp_path / "library" / "visualization.html"
+
+    for _ in range(3):
+        assert main(["visualize-library", "--index-path", str(index_path), "--output", str(output_path)]) == 0
+
+    assert output_path.is_file()
+    assert not (tmp_path / "library" / "previous").exists()
+    assert sorted(p.name for p in (tmp_path / "library").iterdir() if p.is_file()) == [
+        "index.json",
+        "literature_matrix.xlsx",
+        "visualization.html",
+    ]

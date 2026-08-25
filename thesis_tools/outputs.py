@@ -1,22 +1,30 @@
-"""Never overwrite a deliverable you have already produced.
+"""Two kinds of file, two different rules.
 
-Some outputs are timestamped and so accumulate naturally (Part 1's report,
-Part 3's draft). Others are written to a fixed, predictable name — the
-library visualization, the Excel matrix, the library report — because that
-name is what a bookmark, a browser tab and the page's own download link all
-point at. Those used to be silently replaced on every run, which meant
-re-running to change one flag destroyed the version you were comparing
-against.
+**Living views** — `library/visualization.html`, `library/literature_matrix.xlsx`,
+`library/library.md`. These describe your library *as it stands right now*.
+Re-running after adding papers is meant to replace them: an old snapshot of
+a library you have since changed is not history, it is a stale picture of
+something that no longer exists. They are written straight over, and their
+fixed names are what your bookmark, your open browser tab and the page's own
+download link all point at.
 
-Rotating solves both halves: the canonical path stays exactly where it was,
-and the previous file is moved into a `previous/` folder beside it, stamped
-with its own modification time (when it was produced, not when it was
-displaced). Nothing this toolkit produces is ever lost to a re-run.
+**Outputs** — everything under `output/`: Part 1's report, Part 3's review,
+executive summary and detailed summary, and the HTML beside each. These are
+documents you produced at a moment in time, and you will want to compare
+what today's draft says against last week's. They are kept.
 
-Applies to reports and deliverables only. The index, the stance cache, the
-extracted `.txt` files and the downloaded PDFs are state and caches, not
-outputs — they are meant to be rewritten in place, and archiving every
-version of them would bury the actual history in noise.
+Most already carry a timestamp in their name and so accumulate on their own.
+The one case that needs help is an explicit `-o path` reused across runs:
+that names one fixed file, and writing it again would destroy the earlier
+version. `write_output()` covers it by moving the existing file into a
+`previous/` folder beside it, stamped with its own modification time — when
+it was produced, not when it was displaced — so the folder reads as a
+history of runs. The path you named keeps pointing at the newest.
+
+Neither rule applies to state and caches: `index.json`, the stance cache,
+the extracted `.txt` files, downloaded PDFs. Those are meant to be rewritten
+in place, and versioning every one of them would bury the real history in
+noise.
 """
 
 from __future__ import annotations
