@@ -1,6 +1,6 @@
-# thesis-tools
+# thesis-tools (Literature Review)
 
-A local toolkit for working through a thesis or dissertation, built one part at a time.
+A local toolkit for working through a thesis or dissertation's literature review, built one part at a time.
 
 I build this as I struggled during my masters to "master" the literature review, I didn't use Ai much at the time, but now with AI it can be easier to evaluate and help co-think about your dissertation. So I've built these tools. The goal isn't to write your dissertation quickly, its actually to help you plan and research your literature review.
 
