@@ -811,7 +811,13 @@ def test_explicit_words_per_question_overrides_the_scaling(mock_ask, mock_get_cl
 
     call = _calls_matching(mock_ask, _SYNTHESIS_MARKER)[0]
     assert "about 1600 words" in call.kwargs["cache_suffix"]
-    assert call.kwargs["max_tokens"] == 4000  # 1600 * 2.5, room to run long
+    # Room to run long: a word count is a target, not a cap, and being cut
+    # off mid-section is worse than an unused allowance (which costs nothing,
+    # since output is billed on what comes back).
+    from thesis_tools.exec_summary import max_tokens_for
+
+    assert call.kwargs["max_tokens"] == max_tokens_for(1600)
+    assert call.kwargs["max_tokens"] > 1600 * 1.4  # comfortably past the ask
     assert "targeting ~1600 words" in (tmp_path / "review.md").read_text()
 
 

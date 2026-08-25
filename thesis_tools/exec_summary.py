@@ -62,7 +62,37 @@ MAX_WORDS = 2500
 # period) rather than only the conclusions drawn from them.
 DETAILED_WORDS_PER_SOURCE = 200
 DETAILED_MIN_WORDS = 800
-DETAILED_MAX_WORDS = 4000
+# High enough that the cap is not fighting the content. At 200 words per
+# source, 34 sources want ~6,800 words; capping that at 4,000 asked for a
+# document the evidence did not fit into, and the model wrote past the ask
+# rather than dropping the detail — which is how a run hit the output limit
+# with the closing section unwritten.
+DETAILED_MAX_WORDS = 8000
+
+# A word of English costs a bit over a token. Kept explicit because the
+# request budget is set in tokens while every target here is set in words,
+# and quietly conflating the two is what makes a budget look generous when
+# it is not.
+TOKENS_PER_WORD = 1.4
+# How far past the target the model is allowed to run before the API cuts it
+# off. A word count is a target, not a cap: the model routinely writes long,
+# and being cut off mid-document is far worse than paying for a few hundred
+# unused tokens of headroom.
+OUTPUT_HEADROOM = 2.5
+# Well inside what the drafting models allow, and far past anything this
+# tool legitimately produces.
+MAX_OUTPUT_TOKENS = 32_000
+
+
+def max_tokens_for(target_words: int, extra_room: float = 1.0) -> int:
+    """The output budget for a document of roughly `target_words`.
+
+    `extra_room` widens it for a retry after the model ran out of room —
+    retrying a truncation on the same budget just truncates again in the
+    same place, which is a wasted request rather than a second chance.
+    """
+    budget = target_words * TOKENS_PER_WORD * OUTPUT_HEADROOM * extra_room
+    return int(min(max(budget, 1500), MAX_OUTPUT_TOKENS))
 
 VARIANTS = ("summary", "detailed")
 
@@ -457,6 +487,7 @@ def build_summary(
         errors: List[str] = []
         questions = [question for question, _ in written]
         result = shortfall = None
+        extra_room = 1.0
         # One retry, because a model that stops early usually does not do it
         # twice, and because the prompt prefix is cached: the second attempt
         # re-reads it at a tenth of the input price rather than paying for
@@ -469,7 +500,7 @@ def build_summary(
                 system_prompt,
                 user_message,
                 model=model,
-                max_tokens=max(int(target * 2.5), 1500),
+                max_tokens=max_tokens_for(target, extra_room),
                 errors=errors,
                 cache=cache,
                 cache_suffix=instruction,
@@ -484,6 +515,8 @@ def build_summary(
                     "it ran out of room at the model's output limit"
                     + (f", and {shortfall}" if shortfall else "")
                 )
+                # The retry only helps if it has somewhere to go.
+                extra_room = 2.0
             if not shortfall:
                 break
             if attempt == 1:

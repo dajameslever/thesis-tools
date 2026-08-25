@@ -27,7 +27,7 @@ from typing import Dict, List, Optional, Tuple
 from . import llm
 from .citations import STYLES, format_citation, in_text_citation, reference_sort_key
 from .dedupe import dedupe_papers
-from .exec_summary import build_summary
+from .exec_summary import build_summary, max_tokens_for
 from .outputs import write_output
 from .relevance import score_relevance, tokenize
 from .review_html import render_review_html
@@ -488,7 +488,10 @@ def _draft_synthesis_section(
             _synthesis_system_prompt(inputs.allow_quotes),
             user_message,
             model=inputs.llm_model,
-            max_tokens=max(int(target_words * 2.5), 1500),
+            # Headroom costs nothing unless it is used — output is billed on
+            # what comes back, not on what was allowed — and being cut off
+            # mid-section is far worse than an unused allowance.
+            max_tokens=max_tokens_for(target_words),
             errors=errors,
             # The one call in the toolkit big enough for caching to pay: the
             # prompt carries whole papers, and re-running a draft after

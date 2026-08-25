@@ -424,3 +424,68 @@ def test_the_headings_asked_for_and_the_headings_checked_are_the_same():
     questions = ["How do travellers use AI tools?"]
     doc = f"## What this evidence base looks like\n\nx\n\n{_section_heading(1, questions[0])}\n\nProse.\n\n## Where this leaves the thesis\n\n- Act."
     assert _shortfall(doc, "detailed", questions) is None
+
+
+def test_the_output_budget_is_set_in_tokens_not_words():
+    """A budget of "words x 2.5" reads generous and is not: a word costs more
+    than a token, so 4,000 words got room for ~7,400 — and a run overshot it
+    and was cut off with its closing section unwritten."""
+    from thesis_tools.exec_summary import TOKENS_PER_WORD, max_tokens_for
+
+    for words in (800, 2000, 4000, 6800):
+        room_in_words = max_tokens_for(words) / TOKENS_PER_WORD
+        assert room_in_words >= words * 2.4, words
+
+
+def test_the_budget_is_bounded_at_both_ends():
+    from thesis_tools.exec_summary import MAX_OUTPUT_TOKENS, max_tokens_for
+
+    assert max_tokens_for(1) == 1500                       # a floor for tiny asks
+    assert max_tokens_for(100_000) == MAX_OUTPUT_TOKENS    # and a ceiling
+
+
+def test_a_detailed_summary_is_not_capped_below_what_its_evidence_needs():
+    """34 sources want ~6,800 words at 200 each. Capping that at 4,000 asked
+    for a document the evidence did not fit into, and the model wrote past
+    the ask rather than dropping the detail."""
+    assert target_words_for(34, "detailed") == 6800
+    assert target_words_for(100, "detailed") == 8000
+
+
+@patch("thesis_tools.llm.ask")
+def test_a_truncated_draft_is_retried_with_more_room(mock_ask):
+    """Retrying a truncation on the same budget truncates again in the same
+    place — a wasted request, not a second chance."""
+    questions = [("Q one?", "s")]
+    budgets = []
+
+    def _ask(*args, meta=None, max_tokens=None, **kwargs):
+        budgets.append(max_tokens)
+        if len(budgets) == 1:
+            if meta is not None:
+                meta["truncated"] = True
+            return "## What this evidence base looks like\n\nShape.\n\n## 1. Q one?\n\nCut off mid-sen"
+        return _long_detailed([q for q, _ in questions])
+
+    mock_ask.side_effect = _ask
+    _, failure, shortfall = build_summary(**_kwargs(variant="detailed", sections=questions))
+
+    assert len(budgets) == 2 and budgets[1] > budgets[0]
+    assert (failure, shortfall) == (None, None)
+
+
+@patch("thesis_tools.llm.ask")
+def test_a_draft_that_merely_stopped_early_is_retried_on_the_same_budget(mock_ask):
+    """Nothing was wrong with the budget, so widening it would only raise the
+    ceiling on a model that never reached the old one."""
+    questions = [("Q one?", "s")]
+    budgets = []
+
+    def _ask(*args, max_tokens=None, **kwargs):
+        budgets.append(max_tokens)
+        return "## What this evidence base looks like\n\nShape.\n\n## 1."
+
+    mock_ask.side_effect = _ask
+    build_summary(**_kwargs(variant="detailed", sections=questions))
+
+    assert len(budgets) == 2 and budgets[0] == budgets[1]

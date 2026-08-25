@@ -726,7 +726,7 @@ several:
 |---|---|---|
 | `review` (default) | The full draft, one section per sub-question — what you'd build a chapter from | 250–2,000 words *per question* |
 | `summary` | Executive summary: answer first, themed across the questions, compressed to what a reader needs to know | 400–2,500 words |
-| `detailed` | Everything interesting the sources say, question by question, with the specifics behind each finding | 800–4,000 words |
+| `detailed` | Everything interesting the sources say, question by question, with the specifics behind each finding | 800–8,000 words |
 
 Under the hood all three run the same pipeline: the sections are drafted
 first, and the summaries are written *from those sections*. So a summary can
@@ -815,6 +815,15 @@ the actual result.
 
 `--summary-words` forces a length on either summary; `-o` moves the file.
 
+**Length caps do not fight the evidence.** At 200 words per source, 34
+sources want about 6,800 words; a cap of 4,000 asked for a document the
+evidence did not fit into, and the model wrote past the ask rather than
+dropping the detail — until the API cut it off with its closing section
+unwritten. The detailed cap is 8,000, and the request budget is now computed
+in *tokens* (a word costs a bit over one) with 2.5× headroom, because a word
+count is a target rather than a limit. Headroom is free: output is billed on
+what comes back, not on what was allowed.
+
 **A summary that stops early is caught, retried, and labelled.** A model
 that ends its turn halfway through does not announce it: the reply arrives
 with a normal stop reason and reads like the opening of the right document.
@@ -825,9 +834,11 @@ asked for (a section per sub-question, the closing section, and no ending on
 a heading with nothing under it). If it falls short it is retried once — the
 prompt prefix is cached, so the second attempt re-reads it at a tenth of the
 input price — and if it still falls short, the file says so in its header,
-naming what is missing. Running out of room at the model's output limit is
-reported separately from choosing to stop, because they are different
-problems.
+naming what is missing. Running out of room and choosing to stop are
+reported separately, and handled differently: a truncation is retried with a
+wider budget, since retrying it on the same one truncates again in the same
+place, while a model that simply stopped gets the same budget back, because
+nothing was wrong with it.
 
 If the request to Claude fails outright, what gets written is a labelled
 skeleton.
