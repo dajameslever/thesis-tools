@@ -124,9 +124,100 @@ def test_documents_from_entries_uses_title_and_abstract_only():
                     full_text_excerpt="REFERENCES Smith 2020 Jones 2019"),
     )
     (key, text, engaged), = documents_from_entries([entry], engaged_keys={entry.paper.key()})
-    assert text == "A Title An abstract."
+    assert text == "A Title. An abstract."
     assert engaged is True
 
 
 def test_theme_label_falls_back_to_the_matching_term():
     assert Theme(term="travel planning").label == "travel planning"
+
+
+def _copy(paper, i):
+    from thesis_tools.library.index_store import LibraryEntry
+
+    return LibraryEntry(
+        file_path=f"/lib/copy{i}.pdf", file_hash=str(i), file_type="pdf", size_bytes=1,
+        indexed_at="2026-01-01T00:00:00", confidence="verified-doi", doi=paper.doi, paper=paper,
+    )
+
+
+def test_the_same_paper_saved_twice_counts_once():
+    """The reported bug. A library routinely holds the same paper in two
+    files, and counting both does not merely double a number — it lets a
+    phrase used by ONE paper clear the "appears in at least two" bar and be
+    presented as a recurring theme."""
+    from thesis_tools.sources.base import Paper
+
+    paper = Paper(title="Generative AI in travel planning", doi="10.1/a", year=2024,
+                  abstract="Generative AI and travel planning.")
+    other = Paper(title="Travel planning and trust", doi="10.1/b", year=2025,
+                  abstract="Travel planning matters.")
+    entries = [_copy(paper, 1), _copy(paper, 2), _copy(other, 3)]
+
+    themes = extract_themes(documents_from_entries(entries))
+    terms = {t.term: t for t in themes}
+
+    # One paper's phrase must not survive on the strength of its duplicate.
+    assert "generative ai" not in terms
+    assert terms["travel planning"].paper_count == 2
+    assert terms["travel planning"].paper_keys == list(dict.fromkeys(terms["travel planning"].paper_keys))
+
+
+def test_every_theme_lists_each_paper_at_most_once():
+    from thesis_tools.sources.base import Paper
+
+    papers = [
+        Paper(title="Travel planning by algorithms", doi="10.1/a", year=2026, abstract="Travel planning."),
+        Paper(title="Agentic travel planning", doi="10.1/b", year=2025, abstract="Travel planning."),
+        Paper(title="Trust in travel advice", doi="10.1/c", year=2024, abstract="Travel advice."),
+    ]
+    entries = [_copy(papers[0], i) for i in range(3)] + [_copy(papers[1], i) for i in range(3, 6)] + [_copy(papers[2], 9)]
+
+    for theme in extract_themes(documents_from_entries(entries)):
+        assert len(theme.paper_keys) == len(set(theme.paper_keys)), theme.term
+        assert theme.engaged_papers <= theme.paper_count
+
+
+def test_engagement_is_not_double_counted_across_duplicate_files():
+    from thesis_tools.sources.base import Paper
+
+    paper = Paper(title="Travel planning study", doi="10.1/a", year=2024, abstract="Travel planning.")
+    other = Paper(title="Travel planning review", doi="10.1/b", year=2025, abstract="Travel planning.")
+    entries = [_copy(paper, 1), _copy(paper, 2), _copy(other, 3)]
+
+    themes = extract_themes(documents_from_entries(entries, engaged_keys={paper.key()}))
+    theme = {t.term: t for t in themes}["travel planning"]
+
+    assert theme.paper_count == 2
+    assert theme.engaged_papers == 1  # not 2, though two files carried it
+
+
+def test_duplicate_files_merge_their_text_rather_than_one_winning():
+    """A copy that happens to carry an abstract should contribute it even if
+    the other copy has none."""
+    from thesis_tools.sources.base import Paper
+
+    bare = Paper(title="A study", doi="10.1/a", year=2024)
+    with_abstract = Paper(title="A study", doi="10.1/a", year=2024, abstract="On dynamic pricing.")
+    (key, text, _), = documents_from_entries([_copy(bare, 1), _copy(with_abstract, 2)])
+
+    assert "dynamic pricing" in text.lower()
+    assert text.count("A study") == 1  # merged, not concatenated twice
+
+
+def test_no_phrase_spans_the_title_abstract_join():
+    """Joined with a bare space, the last word of the title and the first of
+    the abstract read as adjacent, filling the cloud with phrases no paper
+    ever wrote."""
+    from thesis_tools.sources.base import Paper
+
+    papers = [
+        Paper(title=f"Report on travel planning", doi=f"10.1/{i}", year=2024,
+              abstract="Generative AI is discussed.")
+        for i in range(3)
+    ]
+    terms = {t.term for t in extract_themes(documents_from_entries([_copy(p, i) for i, p in enumerate(papers)]))}
+
+    assert "travel planning" in terms
+    assert "generative ai" in terms
+    assert "planning generative" not in terms

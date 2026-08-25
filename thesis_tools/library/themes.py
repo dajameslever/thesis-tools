@@ -182,20 +182,29 @@ def extract_themes(
 
     Returns themes ranked by how many distinct papers use them, most first.
     """
-    by_term: Dict[str, Theme] = {}
+    # Keyed by term, then by paper — so the same paper reaching a term twice
+    # counts once. It does reach twice in practice: a library routinely holds
+    # the same paper saved to two files, and counting both would not merely
+    # double a number, it would let a phrase used by ONE paper clear the
+    # "appears in at least two papers" bar and be presented as a theme.
+    keys_by_term: Dict[str, Dict[str, bool]] = {}
     surfaces: Dict[str, Counter] = {}
     for key, text, engaged in documents:
         phrases, doc_surfaces = _phrases(text)
         for word, counts in doc_surfaces.items():
             surfaces.setdefault(word, Counter()).update(counts)
         for term in phrases:
-            theme = by_term.setdefault(term, Theme(term=term))
-            theme.paper_keys.append(key)
-            if engaged:
-                theme.engaged_papers += 1
+            papers = keys_by_term.setdefault(term, {})
+            papers[key] = papers.get(key, False) or engaged
 
-    for theme in by_term.values():
-        theme.display = " ".join(_surface_form(word, surfaces) for word in theme.term.split())
+    by_term: Dict[str, Theme] = {}
+    for term, papers in keys_by_term.items():
+        by_term[term] = Theme(
+            term=term,
+            paper_keys=list(papers),
+            engaged_papers=sum(1 for engaged in papers.values() if engaged),
+            display=" ".join(_surface_form(word, surfaces) for word in term.split()),
+        )
 
     recurring = [t for t in by_term.values() if t.paper_count >= min_papers]
     # Rank by reach, then prefer the phrase over the bare word at equal
@@ -209,9 +218,18 @@ def documents_from_entries(entries: Iterable, engaged_keys: Optional[Set[str]] =
     """Adapt library index entries into extract_themes()'s input: title plus
     abstract, and whether this paper speaks to any sub-question."""
     engaged_keys = engaged_keys or set()
-    documents = []
+    # One document per PAPER, not per file. The same paper saved twice is one
+    # paper; merging the two entries' text also means a copy that happens to
+    # carry an abstract contributes it even if the other does not.
+    merged: Dict[str, List[str]] = {}
     for entry in entries:
         paper = entry.paper
-        text = " ".join(part for part in (paper.title, paper.abstract) if part)
-        documents.append((paper.key(), text, paper.key() in engaged_keys))
-    return documents
+        parts = merged.setdefault(paper.key(), [])
+        for part in (paper.title, paper.abstract):
+            if part and part not in parts:
+                parts.append(part)
+    # Joined with a full stop, never a bare space: without it the last word
+    # of the title and the first of the abstract read as adjacent, and the
+    # cloud fills up with phrases like "planning Generative" that no paper
+    # ever wrote.
+    return [(key, ". ".join(parts), key in engaged_keys) for key, parts in merged.items()]

@@ -239,7 +239,11 @@ def compute_stats(
     # so this is the one view that can show a cluster the questions never
     # reach. Each theme carries the papers using it, so the page can open
     # them.
-    by_key = {e.paper.key(): e for e in entries}
+    # First entry wins, so a paper saved to two files renders one row
+    # pointing at a stable copy rather than flipping between them run to run.
+    by_key: Dict[str, LibraryEntry] = {}
+    for entry in entries:
+        by_key.setdefault(entry.paper.key(), entry)
     themes = []
     for theme in extract_themes(documents_from_entries(entries, engaged_keys)):
         papers = []

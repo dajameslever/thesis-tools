@@ -835,3 +835,33 @@ def test_theme_font_size_maps_reach_onto_the_readable_band():
     assert THEME_MIN_FONT_PX < _theme_font_size(6, 2, 10) < THEME_MAX_FONT_PX
     # Every theme having the same reach must not collapse to the floor.
     assert _theme_font_size(3, 3, 3) > THEME_MIN_FONT_PX
+
+
+def test_theme_panels_never_repeat_a_paper():
+    """The reported bug, end to end: a paper saved to two files appeared
+    twice in every theme panel it reached, and inflated the chip count."""
+    from thesis_tools.library.visualize import compute_stats, render_html
+    from thesis_tools.library.index_store import LibraryEntry, LibraryIndex
+    from thesis_tools.sources.base import Paper
+
+    paper = Paper(title="Travel planning by algorithms", doi="10.1/a", year=2026,
+                  abstract="Travel planning by algorithms.")
+    other = Paper(title="Agentic travel planning", doi="10.1/b", year=2025,
+                  abstract="Travel planning and agents.")
+    entries = [
+        LibraryEntry(file_path=f"/lib/{p.doi}-{i}.pdf", file_hash=f"{p.doi}{i}", file_type="pdf",
+                     size_bytes=1, indexed_at="2026-01-01T00:00:00", confidence="verified-doi",
+                     doi=p.doi, paper=p)
+        for p in (paper, other) for i in range(3)
+    ]
+
+    stats = compute_stats(LibraryIndex(entries))
+    theme = {t["label"]: t for t in stats["themes"]}["Travel planning"]
+
+    titles = [p["title"] for p in theme["papers"]]
+    assert sorted(titles) == ["Agentic travel planning", "Travel planning by algorithms"]
+    assert len(titles) == len(set(titles))
+
+    # The chip count and the panel must agree — the count is the same list.
+    html = render_html(stats)
+    assert f'>{len(theme["papers"])}</span>' in html
