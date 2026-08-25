@@ -15,7 +15,8 @@ from __future__ import annotations
 import datetime as _dt
 import html as _html
 import json as _json
-from typing import Dict, List, Optional, Tuple
+from pathlib import Path
+from typing import Dict, List, Optional, Set, Tuple
 
 from .. import llm
 from ..links import doi_url, google_scholar_search_url, sciencedirect_search_url
@@ -31,6 +32,7 @@ from .citation_graph import (
 )
 from .index_store import LibraryEntry, LibraryIndex
 from .literature_matrix import build_literature_matrix_workbook
+from .themes import documents_from_entries, extract_themes
 
 # Display labels and a fixed order for the "by source" breakdown — the
 # order matches the categorical palette below, so the same source always
@@ -209,6 +211,9 @@ def compute_stats(
     # low-relevance weakness flag answers, but shown per paper rather than
     # as a single count.
     relevance_rows: List[dict] = []
+    # Captured while the rows are built, before they are sorted — the rows
+    # lose their pairing with `entries` the moment they are reordered.
+    engaged_keys: Set[str] = set()
     for entry in entries:
         stances = analysis.stances_for(entry.paper) if analysis else {}
         row_stances = [
@@ -226,7 +231,40 @@ def compute_stats(
                 "engaged": sum(1 for st in row_stances if st != "unrelated"),
             }
         )
+        if any(st != "unrelated" for st in row_stances):
+            engaged_keys.add(entry.paper.key())
     relevance_rows.sort(key=lambda r: (r["relevance"] or 0, r["engaged"]), reverse=True)
+
+    # Themes come from the papers' own words rather than from the questions,
+    # so this is the one view that can show a cluster the questions never
+    # reach. Each theme carries the papers using it, so the page can open
+    # them.
+    by_key = {e.paper.key(): e for e in entries}
+    themes = []
+    for theme in extract_themes(documents_from_entries(entries, engaged_keys)):
+        papers = []
+        for key in theme.paper_keys:
+            entry = by_key.get(key)
+            if entry is None:
+                continue
+            papers.append(
+                {
+                    "title": entry.paper.title,
+                    "year": entry.paper.year,
+                    "doi": entry.doi or entry.paper.doi,
+                    "file_path": entry.file_path,
+                    "engaged": key in engaged_keys,
+                }
+            )
+        papers.sort(key=lambda p: (not p["engaged"], -(p["year"] or 0), p["title"]))
+        themes.append(
+            {
+                "term": theme.term,
+                "label": theme.label,
+                "papers": papers,
+                "engaged_papers": theme.engaged_papers,
+            }
+        )
 
     stats = {
         "generated_at": _dt.datetime.now().strftime("%Y-%m-%d %H:%M"),
@@ -254,6 +292,7 @@ def compute_stats(
         "research_question": research_question,
         "low_relevance_titles": low_relevance_titles,
         "relevance_rows": relevance_rows,
+        "themes": themes,
         # Not rendered directly by render_html() — kept so build_literature_matrix()
         # can reuse the same stance classification build_visualization_html()
         # already computed, instead of re-running (and re-billing) it.
@@ -638,6 +677,34 @@ table.viz-table th { color: var(--viz-text-secondary); font-weight: 600; }
 .viz-subq-stance-label { font-weight: 600; font-size: 0.85rem; margin: 10px 0 2px; }
 .viz-legend { display: flex; gap: 18px; flex-wrap: wrap; font-size: 0.8rem; color: var(--viz-text-secondary); margin: 0 0 14px; align-items: center; }
 .viz-swatch { display: inline-block; width: 11px; height: 11px; border-radius: 3px; margin-right: 5px; vertical-align: -1px; border: 1px solid var(--viz-border); }
+.viz-theme-group { font-size: 0.8rem; font-weight: 600; color: var(--viz-text-secondary); margin: 18px 0 8px; }
+.viz-theme-group:first-of-type { margin-top: 4px; }
+.viz-theme-cloud { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.viz-theme-chip {
+  /* A chip, not coloured text: the label stays on ink tokens at full
+     contrast while the fill carries state, and the padding gives every
+     chip — including the smallest — a hit target past 24px. */
+  display: inline-flex; align-items: baseline; gap: 7px;
+  font-family: inherit; font-weight: 500; line-height: 1.25;
+  color: var(--viz-text-primary); background: var(--viz-accent-soft);
+  border: 1px solid transparent; border-radius: 999px;
+  padding: 7px 13px; min-height: 26px; cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+.viz-theme-chip:hover { border-color: var(--viz-accent); }
+.viz-theme-chip:focus-visible { outline: 2px solid var(--viz-accent); outline-offset: 2px; }
+.viz-theme-chip[aria-pressed="true"] { border-color: var(--viz-accent); background: var(--viz-accent-soft); box-shadow: inset 0 0 0 1px var(--viz-accent); }
+.viz-theme-count { font-size: 0.7rem; font-weight: 600; color: var(--viz-text-secondary); font-variant-numeric: tabular-nums; }
+.viz-theme-panel { margin-top: 18px; border-top: 1px solid var(--viz-border); padding-top: 14px; }
+.viz-theme-panel-title { font-weight: 600; margin: 0 0 10px; }
+.viz-theme-papers { margin: 0; padding-left: 18px; }
+.viz-theme-papers li { margin-bottom: 10px; }
+.viz-theme-links { font-size: 0.82rem; }
+.viz-theme-empty { margin: 18px 0 0; border-top: 1px solid var(--viz-border); padding-top: 14px; }
+/* Without scripting nothing could ever be revealed, so show every theme's
+   papers instead of a cloud that does nothing when clicked. */
+.viz-no-js .viz-theme-panel { display: block; }
+.viz-no-js .viz-theme-empty { display: none; }
 .viz-lede { margin: 0 0 14px; color: var(--viz-text-secondary); font-size: 0.9rem; }
 .viz-lede strong { color: var(--viz-text-primary); font-variant-numeric: tabular-nums; }
 .viz-scroll { overflow-x: auto; }
@@ -800,6 +867,9 @@ def render_html(stats: dict, matrix_filename: Optional[str] = None) -> str:
         body = f"""
         <div class="viz-tiles">{tiles}</div>
 
+        <h2>Themes across your library</h2>
+        {_render_themes_section(stats)}
+
         <h2>Coverage by sub-question</h2>
         {_render_subquestion_coverage_section(stats)}
 
@@ -954,6 +1024,50 @@ def _arc_diagram_svg(internal: dict) -> str:
 # Hover highlight only — the diagram is fully readable without it (native
 # <title> tooltips on every node, plus the link list below), so this
 # enhances and never gates.
+_THEMES_JS = """
+(function() {
+  const root = document.querySelector('.viz-theme-cloud');
+  if (!root) { return; }
+  const section = root.closest('.viz-section');
+  const chips = Array.prototype.slice.call(section.querySelectorAll('.viz-theme-chip'));
+  const panels = Array.prototype.slice.call(section.querySelectorAll('.viz-theme-panel'));
+  const empty = section.querySelector('.viz-theme-empty');
+  // Scripting is present, so the no-JS fallback (every panel expanded) is
+  // no longer what we want.
+  section.classList.remove('viz-no-js');
+
+  function select(index) {
+    chips.forEach(function(chip) {
+      chip.setAttribute('aria-pressed', String(chip.dataset.theme === index));
+    });
+    panels.forEach(function(panel) {
+      panel.hidden = panel.id !== 'viz-theme-panel-' + index;
+    });
+    if (empty) { empty.hidden = index !== null; }
+  }
+
+  function clear() {
+    chips.forEach(function(chip) { chip.setAttribute('aria-pressed', 'false'); });
+    panels.forEach(function(panel) { panel.hidden = true; });
+    if (empty) { empty.hidden = false; }
+  }
+
+  chips.forEach(function(chip) {
+    chip.addEventListener('click', function() {
+      // Clicking the selected theme again clears it, so the cloud is never
+      // a trap the reader has to reload out of.
+      if (chip.getAttribute('aria-pressed') === 'true') { clear(); }
+      else { select(chip.dataset.theme); }
+    });
+  });
+
+  document.addEventListener('keydown', function(event) {
+    if (event.key === 'Escape') { clear(); }
+  });
+})();
+"""
+
+
 _ARC_JS = """
 (function() {
   const svg = document.getElementById('viz-arc');
@@ -1265,6 +1379,121 @@ def _stance_cell_html(stance: str, title: str, question_label: str) -> str:
     tip = f"{title} — {question_label}: {STANCE_LABEL[stance]}"
     return f'<td class="{cls}"{style} title="{_esc(tip)}"><span aria-hidden="true">{glyph}</span>' \
            f'<span class="viz-sr">{_esc(STANCE_LABEL[stance])}</span></td>'
+
+
+# Font size carries how many papers a theme reaches. The floor is a
+# readable body size rather than a vanishing one — a theme that made the cut
+# recurs across papers and should not need squinting at — and the ceiling is
+# set so the largest chip still wraps sanely on a narrow screen.
+THEME_MIN_FONT_PX = 13
+THEME_MAX_FONT_PX = 30
+
+
+def _theme_font_size(count: int, lowest: int, highest: int) -> int:
+    if highest <= lowest:
+        return (THEME_MIN_FONT_PX + THEME_MAX_FONT_PX) // 2
+    share = (count - lowest) / (highest - lowest)
+    return round(THEME_MIN_FONT_PX + share * (THEME_MAX_FONT_PX - THEME_MIN_FONT_PX))
+
+
+def _theme_paper_links(paper: dict) -> str:
+    """Ways to actually get to the paper. The local file comes first where
+    there is one: this library was built from files on disk, and opening the
+    PDF you already have beats a search box every time."""
+    links = []
+    path = paper.get("file_path")
+    if path:
+        links.append(
+            f'<a href="{_esc(Path(path).absolute().as_uri())}" target="_blank" rel="noopener">Open file</a>'
+        )
+    links.append(_find_it_links_html(paper["title"], paper.get("doi")))
+    return " · ".join(part for part in links if part)
+
+
+def _render_theme_panel(index: int, theme: dict) -> str:
+    items = []
+    for paper in theme["papers"]:
+        year = f' <span class="viz-grid-year-col">{paper["year"]}</span>' if paper.get("year") else ""
+        engaged = "" if paper.get("engaged") else ' <span class="viz-muted">· speaks to none of your questions</span>'
+        items.append(
+            f'<li><strong>{_esc(paper["title"])}</strong>{year}{engaged}'
+            f'<br><span class="viz-theme-links">{_theme_paper_links(paper)}</span></li>'
+        )
+    return (
+        f'<div class="viz-theme-panel" id="viz-theme-panel-{index}" hidden>'
+        f'<p class="viz-theme-panel-title">{len(theme["papers"])} paper(s) using '
+        f'\u201c{_esc(theme["label"])}\u201d</p>'
+        f'<ul class="viz-theme-papers">{"".join(items)}</ul></div>'
+    )
+
+
+def _render_theme_chips(themes: List[Tuple[int, dict]], lowest: int, highest: int) -> str:
+    chips = []
+    for index, theme in themes:
+        size = _theme_font_size(len(theme["papers"]), lowest, highest)
+        chips.append(
+            f'<button type="button" class="viz-theme-chip" style="font-size:{size}px" '
+            f'aria-pressed="false" aria-controls="viz-theme-panel-{index}" data-theme="{index}">'
+            f'{_esc(theme["label"])}'
+            f'<span class="viz-theme-count">{len(theme["papers"])}</span></button>'
+        )
+    return f'<div class="viz-theme-cloud">{"".join(chips)}</div>'
+
+
+def _render_themes_section(stats: dict) -> str:
+    """The one view built from the papers' own words rather than from the
+    questions — so it can show a cluster in the library that none of the
+    questions reach, which nothing built from the questions ever could.
+
+    Size carries reach (how many distinct papers use the term). Colour is
+    left free for selection state rather than repeating what size already
+    says, and the count is printed on every chip so the magnitude is never
+    size-alone.
+    """
+    themes = stats.get("themes") or []
+    if not themes:
+        return (
+            '<div class="viz-section"><p class="viz-muted">No recurring themes found — with this few '
+            "papers (or this little abstract text), no phrase appears in more than one of them "
+            "yet.</p></div>"
+        )
+
+    counts = [len(t["papers"]) for t in themes]
+    lowest, highest = min(counts), max(counts)
+    indexed = list(enumerate(themes))
+    engaged = [(i, t) for i, t in indexed if t["engaged_papers"]]
+    unengaged = [(i, t) for i, t in indexed if not t["engaged_papers"]]
+
+    lede = (
+        '<p class="viz-lede">Recurring phrases in your papers\u2019 titles and abstracts, sized by how '
+        "many <strong>different</strong> papers use them \u2014 a phrase repeated fifteen times inside one "
+        "paper is that paper\u2019s vocabulary, not a theme. Pick one to see the papers it comes from.</p>"
+    )
+
+    groups = []
+    if stats.get("sub_questions") and engaged and unengaged:
+        groups.append(
+            '<p class="viz-theme-group">Themes your questions reach</p>'
+            + _render_theme_chips(engaged, lowest, highest)
+        )
+        groups.append(
+            '<p class="viz-theme-group">In your library, but no paper using it speaks to any of your '
+            "questions</p>" + _render_theme_chips(unengaged, lowest, highest)
+        )
+    else:
+        groups.append(_render_theme_chips(indexed, lowest, highest))
+
+    panels = "".join(_render_theme_panel(i, t) for i, t in indexed)
+    empty = (
+        '<p class="viz-theme-empty viz-muted">Pick a theme above to list the papers it appears in.</p>'
+    )
+    # Ships with the no-JS class already on: if the script never runs, every
+    # theme's papers are visible instead of a cloud that does nothing when
+    # clicked. The script's first act is to take it off.
+    return (
+        f'<div class="viz-section viz-no-js">{lede}{"".join(groups)}{empty}{panels}'
+        f"<script>{_THEMES_JS}</script></div>"
+    )
 
 
 def _render_relevance_grid_section(stats: dict) -> str:

@@ -472,6 +472,55 @@ sub-question set triggers a fresh Claude call, restoring the "cheap to
 regenerate any time" promise this command otherwise makes. Pass
 `--no-stance-cache` to always reclassify from scratch.
 
+### Themes across your library
+
+Every other view on that page starts from questions **you** supplied:
+relevance is scored against them, stances are classified against them,
+coverage is counted against them. That makes them all blind in one specific
+way — your library can be full of a topic you never thought to ask about,
+and nothing built from your questions will ever show it.
+
+The theme cloud is built from the papers' own words instead. Recurring
+phrases are pulled from titles and abstracts and sized by how many
+**different** papers use them — document frequency, not raw count, because a
+phrase repeated fifteen times inside one paper is that paper's vocabulary
+while one appearing once each in nine papers is a theme running through the
+library. **Click any theme to list the papers it comes from**, each with a
+direct link to open your local PDF, plus DOI / Google Scholar /
+ScienceDirect.
+
+The cloud is split in two, and the second half is the point:
+
+- **Themes your questions reach**
+- **In your library, but no paper using it speaks to any of your questions**
+
+That second group is the blind spot made visible — a real cluster of work
+you have collected that your sub-questions don't touch. Either it belongs in
+your questions, or those papers don't belong in your library.
+
+Some details that make it read as themes rather than word soup:
+
+- Phrases never span a stopword or a sentence break, so "impact of AI on
+  travel planning" yields *AI* and *travel planning*, never the phantom
+  "AI travel".
+- Short acronyms survive the minimum word length — *AI*, *ML*, *UX*, *OTA*
+  are usually the terms you'd look for first, and a flat length floor drops
+  exactly those.
+- Terms display as the papers write them: *generative AI*, *ChatGPT*, not
+  *generative ai*.
+- A bare word is dropped when a phrase already says it (*generative* beside
+  *generative AI* is one theme shown twice) unless it's genuinely used
+  beyond that phrase.
+- Title scaffolding is filtered out — "a systematic review exploring
+  perspectives on X" names no subject, so none of those words is a theme.
+
+Size carries reach and the count is printed on every chip, so magnitude is
+never size-alone; colour is left free for selection state rather than
+repeating what size already says. Chips are real buttons — tab to them,
+Enter to select, Escape to clear — and with scripting off every theme's
+papers are listed rather than leaving a cloud that does nothing when
+clicked.
+
 ### Downloading a literature-review matrix
 
 Every `visualize-library` run also writes a companion Excel file —
@@ -869,6 +918,8 @@ thesis_tools/
     identify.py         DOI/title resolution against Crossref + Semantic Scholar
     index_store.py       The JSON-backed local index (library/index.json)
     citation_graph.py    Citation-coverage computation, internal citation links, Mermaid mind-map
+    themes.py            Recurring phrases across the library, by document frequency — the one view
+                         built from the papers' own words rather than from your questions
     organizer.py         Optional copy-only file organizer
     report.py            Renders Part 2's Markdown report
     library_indexer.py   Orchestrates Part 2

@@ -1,3 +1,4 @@
+import re
 from unittest.mock import patch
 
 from thesis_tools.library.index_store import LibraryEntry, LibraryIndex
@@ -737,3 +738,100 @@ def test_papers_to_consider_bars_stay_in_citation_count_order():
     counts = [int(c) for c in re.findall(r'class="viz-bar-count">(\d+)<', section)]
     assert counts == sorted(counts, reverse=True)
     assert counts[0] == 3
+
+
+def _themed_stats(engaged_titles=()):
+    from thesis_tools.library.visualize import compute_stats
+    from thesis_tools.library.index_store import LibraryEntry, LibraryIndex
+    from thesis_tools.sources.base import Paper
+
+    specs = [
+        ("Generative AI in travel planning", "Generative AI reshapes travel planning."),
+        ("Travel planning with generative AI assistants", "Generative AI assistants and travel planning."),
+        ("Supply chain logistics digitalisation", "Supply chain logistics outside tourism."),
+        ("Logistics and supply chain platforms", "Supply chain logistics platforms."),
+    ]
+    entries = [
+        LibraryEntry(
+            file_path=f"/library/p{i}.pdf", file_hash=str(i), file_type="pdf", size_bytes=1,
+            indexed_at="2026-01-01T00:00:00", confidence="verified-doi", doi=f"10.1/{i}",
+            paper=Paper(title=t, doi=f"10.1/{i}", year=2024, abstract=a, sources=["crossref"]),
+        )
+        for i, (t, a) in enumerate(specs)
+    ]
+    return compute_stats(LibraryIndex(entries), research_question="How does AI affect travel planning?")
+
+
+def test_themes_carry_the_papers_that_use_them():
+    stats = _themed_stats()
+    themes = {t["label"]: t for t in stats["themes"]}
+
+    assert "travel planning" in themes
+    titles = {p["title"] for p in themes["travel planning"]["papers"]}
+    assert titles == {"Generative AI in travel planning", "Travel planning with generative AI assistants"}
+
+
+def test_each_theme_paper_offers_a_way_to_open_it():
+    stats = _themed_stats()
+    paper = stats["themes"][0]["papers"][0]
+    assert paper["file_path"].endswith(".pdf")
+    assert paper["doi"]
+
+
+def test_the_rendered_cloud_links_every_chip_to_its_own_panel():
+    from thesis_tools.library.visualize import render_html
+
+    html = render_html(_themed_stats())
+
+    assert "Themes across your library" in html
+    assert 'class="viz-theme-chip"' in html
+    # Every chip points at a panel that exists, so no click can land nowhere.
+    controls = set(re.findall(r'aria-controls="(viz-theme-panel-\d+)"', html))
+    panels = set(re.findall(r'id="(viz-theme-panel-\d+)"', html))
+    assert controls and controls <= panels
+
+
+def test_a_chip_carries_its_count_so_reach_is_never_size_alone():
+    from thesis_tools.library.visualize import render_html
+
+    html = render_html(_themed_stats())
+    assert 'class="viz-theme-count"' in html
+
+
+def test_the_cloud_degrades_to_every_panel_open_without_scripting():
+    """A cloud that does nothing when clicked is worse than a list."""
+    from thesis_tools.library.visualize import render_html
+
+    html = render_html(_themed_stats())
+    assert "viz-section viz-no-js" in html
+    assert ".viz-no-js .viz-theme-panel { display: block; }" in html
+    assert "section.classList.remove('viz-no-js')" in html
+
+
+def test_a_library_with_no_recurring_phrase_says_so():
+    from thesis_tools.library.visualize import compute_stats, render_html
+    from thesis_tools.library.index_store import LibraryEntry, LibraryIndex
+    from thesis_tools.sources.base import Paper
+
+    index = LibraryIndex([
+        LibraryEntry(file_path="a.pdf", file_hash="h", file_type="pdf", size_bytes=1,
+                     indexed_at="2026-01-01T00:00:00", confidence="verified-doi", doi="10.1/a",
+                     paper=Paper(title="A singular topic", doi="10.1/a", year=2024))
+    ])
+    stats = compute_stats(index)
+    assert stats["themes"] == []
+    assert "No recurring themes found" in render_html(stats)
+
+
+def test_theme_font_size_maps_reach_onto_the_readable_band():
+    from thesis_tools.library.visualize import (
+        THEME_MAX_FONT_PX,
+        THEME_MIN_FONT_PX,
+        _theme_font_size,
+    )
+
+    assert _theme_font_size(2, 2, 10) == THEME_MIN_FONT_PX
+    assert _theme_font_size(10, 2, 10) == THEME_MAX_FONT_PX
+    assert THEME_MIN_FONT_PX < _theme_font_size(6, 2, 10) < THEME_MAX_FONT_PX
+    # Every theme having the same reach must not collapse to the floor.
+    assert _theme_font_size(3, 3, 3) > THEME_MIN_FONT_PX
