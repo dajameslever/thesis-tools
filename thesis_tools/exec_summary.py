@@ -33,6 +33,7 @@ on its own.
 from __future__ import annotations
 
 import re
+import sys
 from typing import Dict, List, Optional, Tuple
 
 from . import llm
@@ -215,8 +216,10 @@ _DETAILED_SYSTEM_PROMPT = (
     "here — they belong to the sub-questions, and stating them twice is the one thing this "
     "document must not do.\n"
     "\n"
-    "## <number>. <the sub-question, copied exactly>\n"
-    "One section per sub-question, in the order given, numbered. Open directly with what the "
+    "## (one heading per sub-question)\n"
+    "The exact headings to use are listed for you at the end of the message. Copy each one "
+    "verbatim, in the order given, and write a section under it \u2014 do not compose a heading of "
+    "your own, and do not skip one. Open directly with what the "
     "sources establish — continuous prose, not a list of papers, each claim cited. Then, ONLY "
     "where there is something real to say, add any of these as their own short paragraph, "
     "starting with the bold lead-in exactly as written:\n"
@@ -260,6 +263,60 @@ def _space_out_scqa(text: str) -> str:
         # the result is the same however the model chose to lay it out.
         text = re.sub(rf"\s*{re.escape(label)}", f"\n\n{label}", text)
     return text.lstrip("\n")
+
+
+# What each variant must contain to be a document rather than a beginning.
+_EXEC_REQUIRED_HEADINGS = (
+    "## The short version",
+    "## What the evidence shows",
+    "## Where this leaves the thesis" ,
+)
+
+
+def _shortfall(text: str, variant: str, questions: List[str]) -> Optional[str]:
+    """What is missing from a returned summary, or None if it is complete.
+
+    A model that stops early does not announce it: the reply arrives with a
+    normal stop reason, reads like the opening of the right document, and is
+    written to disk as the deliverable. One run of this ended after the
+    opening paragraph and a bare "## 1." heading. The only defence is to
+    check that what came back is actually the document that was asked for.
+    """
+    stripped = text.strip()
+    if not stripped:
+        return "the model returned nothing"
+
+    if variant == "detailed":
+        missing = [
+            _section_heading(i, question)
+            for i, question in enumerate(questions, start=1)
+            if _section_heading(i, question) not in text and f"## {i}." not in text
+        ]
+        if missing:
+            return (
+                f"{len(missing)} of {len(questions)} sub-question section(s) were never written "
+                f"(first missing: \u201c{missing[0]}\u201d)"
+            )
+        if "## Where this leaves the thesis" not in text:
+            return "the closing 'Where this leaves the thesis' section was never written"
+    else:
+        missing_headings = [h for h in _EXEC_REQUIRED_HEADINGS if h not in text]
+        if missing_headings:
+            return f"the '{missing_headings[0].lstrip('# ')}' section was never written"
+
+    # A document that ends on a heading has stopped mid-sentence in the most
+    # literal way: the section it just announced is not there.
+    last = stripped.rsplit("\n", 1)[-1].strip()
+    if last.startswith("#"):
+        return f"it ends on the heading \u201c{last}\u201d with nothing under it"
+    return None
+
+
+def _section_heading(number: int, question: str) -> str:
+    """The heading for one sub-question's section, generated in one place so
+    the instruction that asks for it and the check that the model produced it
+    can never disagree about what it looks like."""
+    return f"## {number}. {question}"
 
 
 def _fit_sections(sections: List[Tuple[str, str]], budget: int = MAX_SECTION_CHARS) -> Tuple[List[Tuple[str, str]], int]:
@@ -318,8 +375,15 @@ def build_summary(
     words: Optional[int] = None,
     cache: bool = True,
     usage_totals: Optional[Dict[str, int]] = None,
-) -> Tuple[str, Optional[str]]:
-    """Returns (markdown, failure reason).
+) -> Tuple[str, Optional[str], Optional[str]]:
+    """Returns (markdown, failure reason, shortfall).
+
+    The two are different problems and must not be reported as one. A
+    *failure* means the request did not produce a document at all and what
+    comes back is the skeleton. A *shortfall* means a real document came
+    back but it is not the whole one — sections missing, or it ends on a
+    heading with nothing under it. Both have to reach the reader; only the
+    first makes the output a form to fill in.
 
     `variant` picks which document this is. "summary" is the executive
     summary: answer first, themed across the sub-questions, compressed to
@@ -339,6 +403,7 @@ def build_summary(
         return (
             "_No sections were drafted, so there is nothing to summarize._",
             "the review produced no sections",
+            None,
         )
 
     target = words or target_words_for(len(cited_papers), variant)
@@ -362,11 +427,23 @@ def build_summary(
         user_message = "\n\n".join(context) + "\n\nDrafted sections:\n\n" + "\n\n".join(blocks)
         if variant == "detailed":
             system_prompt = _DETAILED_SYSTEM_PROMPT
+            # The headings are handed over ready to copy rather than
+            # described as a template to fill in. Asking the model to
+            # assemble "## <number>. <the sub-question, copied exactly>"
+            # left it composing the heading itself, and a run of this was
+            # seen to emit "## 1." and stop there — a two-paragraph document
+            # written as though it were finished.
+            headings = "\n".join(
+                _section_heading(i, question) for i, (question, _) in enumerate(written, start=1)
+            )
             instruction = (
                 f"Write the detailed summary of the review above, aiming for about {target} words "
                 f"across all {len(written)} sub-question(s) — a guide to the whole document, not a "
                 "quota for each section: a sub-question with more behind it earns more room than "
-                "one with less. Say each thing once."
+                "one with less. Say each thing once.\n\n"
+                "Use exactly these headings, copied verbatim, in this order, each followed by its "
+                f"section:\n\n## What this evidence base looks like\n{headings}\n"
+                "## Across the questions\n## Where this leaves the thesis"
             )
         else:
             system_prompt = _EXEC_SYSTEM_PROMPT
@@ -378,29 +455,63 @@ def build_summary(
                 "distinct point, rather than padding fewer ones out to the word count."
             )
         errors: List[str] = []
-        result = llm.ask(
-            client,
-            system_prompt,
-            user_message,
-            model=model,
-            max_tokens=max(int(target * 2.5), 1500),
-            errors=errors,
-            cache=cache,
-            cache_suffix=instruction,
-            usage_totals=usage_totals,
-        )
+        questions = [question for question, _ in written]
+        result = shortfall = None
+        # One retry, because a model that stops early usually does not do it
+        # twice, and because the prompt prefix is cached: the second attempt
+        # re-reads it at a tenth of the input price rather than paying for
+        # the papers again. More than one retry would be spending real money
+        # on a pattern that is not converging.
+        for attempt in (1, 2):
+            meta: Dict[str, object] = {}
+            result = llm.ask(
+                client,
+                system_prompt,
+                user_message,
+                model=model,
+                max_tokens=max(int(target * 2.5), 1500),
+                errors=errors,
+                cache=cache,
+                cache_suffix=instruction,
+                usage_totals=usage_totals,
+                meta=meta,
+            )
+            if result is None:
+                break
+            shortfall = _shortfall(result, variant, questions)
+            if meta.get("truncated"):
+                shortfall = (
+                    "it ran out of room at the model's output limit"
+                    + (f", and {shortfall}" if shortfall else "")
+                )
+            if not shortfall:
+                break
+            if attempt == 1:
+                print(
+                    f"  [summary] the draft came back incomplete ({shortfall}) — retrying once",
+                    file=sys.stderr,
+                )
+
         if result:
             if trimmed:
                 result += (
                     f"\n\n_Note: {trimmed} of the {len(written)} drafted section(s) were too long to "
                     "send in full, so this summary was written from as much of each as would fit._"
                 )
-            return _with_references(_space_out_scqa(result), cited_papers, markers_by_key, style), None
+            return (
+                _with_references(_space_out_scqa(result), cited_papers, markers_by_key, style),
+                None,
+                shortfall,
+            )
         failure = errors[0] if errors else "the request returned nothing"
 
-    return _fallback_summary(
-        research_question, written, tensions, no_coverage, cited_papers, markers_by_key, style, variant
-    ), failure
+    return (
+        _fallback_summary(
+            research_question, written, tensions, no_coverage, cited_papers, markers_by_key, style, variant
+        ),
+        failure,
+        None,
+    )
 
 
 def _cites(text: str, paper: Paper, marker: str, style: str) -> bool:

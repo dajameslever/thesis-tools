@@ -117,7 +117,7 @@ def test_failure_is_reported_and_falls_back_to_a_labelled_skeleton(mock_ask):
         return None
 
     mock_ask.side_effect = _fail
-    text, failure = build_summary(**_kwargs(tensions=["Does AI displace OTAs?"]))
+    text, failure, _ = build_summary(**_kwargs(tensions=["Does AI displace OTAs?"]))
 
     assert failure == "BadRequestError: prompt is too long"
     assert "Not written" in text
@@ -125,13 +125,13 @@ def test_failure_is_reported_and_falls_back_to_a_labelled_skeleton(mock_ask):
 
 
 def test_no_client_produces_the_skeleton_without_claiming_a_failure():
-    text, failure = build_summary(**_kwargs(client=None))
+    text, failure, _ = build_summary(**_kwargs(client=None))
     assert failure is None
     assert "## The short version" in text
 
 
 def test_empty_review_is_not_summarized():
-    text, failure = build_summary(**_kwargs(sections=[("Q", "   ")]))
+    text, failure, _ = build_summary(**_kwargs(sections=[("Q", "   ")]))
     assert failure == "the review produced no sections"
     assert "nothing to summarize" in text
 
@@ -206,7 +206,7 @@ def test_scqa_lands_as_four_paragraphs_however_the_model_lays_it_out():
 @patch("thesis_tools.llm.ask")
 def test_the_written_summary_is_spaced_before_it_is_returned(mock_ask):
     mock_ask.return_value = "## The short version\n\n**Situation:** A.\n**Complication:** B.\n**Answer:** C."
-    text, _ = build_summary(**_kwargs())
+    text, _, _ = build_summary(**_kwargs())
     assert "A.\n\n**Complication:**" in text
 
 
@@ -312,8 +312,115 @@ def test_an_unknown_variant_is_refused():
 @patch("thesis_tools.llm.ask")
 def test_the_detailed_fallback_is_not_shaped_like_an_executive_summary(mock_ask):
     mock_ask.return_value = None
-    text, failure = build_summary(**_kwargs(variant="detailed"))
+    text, failure, _ = build_summary(**_kwargs(variant="detailed"))
 
     assert failure is not None
     assert text.startswith("## What this evidence base looks like")
     assert "## The short version" not in text
+
+
+def _long_detailed(questions, closing=True):
+    from thesis_tools.exec_summary import _section_heading
+
+    parts = ["## What this evidence base looks like", "Shape of the evidence."]
+    for i, q in enumerate(questions, start=1):
+        parts += [_section_heading(i, q), "Prose citing (Doe, 2020)."]
+    parts += ["## Across the questions", "A pattern."]
+    if closing:
+        parts += ["## Where this leaves the thesis", "- Run a targeted search."]
+    return "\n\n".join(parts)
+
+
+@patch("thesis_tools.llm.ask")
+def test_a_summary_that_stops_early_is_reported_not_shipped(mock_ask):
+    """The reported bug: the model ended its turn after the opening
+    paragraph and a bare "## 1." heading, and a two-paragraph file was
+    written as though it were the deliverable."""
+    mock_ask.return_value = "## What this evidence base looks like\n\nThe review draws on 34 papers.\n\n## 1."
+
+    text, failure, shortfall = build_summary(
+        **_kwargs(variant="detailed", sections=[("Q one?", "s"), ("Q two?", "s")])
+    )
+
+    assert failure is None  # a real document came back — just not all of it
+    assert shortfall and "never written" in shortfall
+    assert text.startswith("## What this evidence base looks like")
+
+
+@patch("thesis_tools.llm.ask")
+def test_an_incomplete_summary_is_retried_once(mock_ask):
+    """The prompt prefix is cached, so a second attempt re-reads it at a
+    tenth of the price — cheap enough to be worth one try, not two."""
+    questions = [("Q one?", "s"), ("Q two?", "s")]
+    mock_ask.side_effect = [
+        "## What this evidence base looks like\n\nShape.\n\n## 1.",
+        _long_detailed([q for q, _ in questions]),
+    ]
+
+    text, failure, shortfall = build_summary(**_kwargs(variant="detailed", sections=questions))
+
+    assert mock_ask.call_count == 2
+    assert (failure, shortfall) == (None, None)
+    assert "## Where this leaves the thesis" in text
+
+
+@patch("thesis_tools.llm.ask")
+def test_retrying_stops_at_one_attempt(mock_ask):
+    mock_ask.return_value = "## What this evidence base looks like\n\nShape.\n\n## 1."
+    build_summary(**_kwargs(variant="detailed", sections=[("Q one?", "s"), ("Q two?", "s")]))
+    assert mock_ask.call_count == 2
+
+
+@patch("thesis_tools.llm.ask")
+def test_a_complete_summary_is_not_retried(mock_ask):
+    questions = [("Q one?", "s"), ("Q two?", "s")]
+    mock_ask.return_value = _long_detailed([q for q, _ in questions])
+
+    text, failure, shortfall = build_summary(**_kwargs(variant="detailed", sections=questions))
+
+    assert mock_ask.call_count == 1
+    assert (failure, shortfall) == (None, None)
+
+
+@patch("thesis_tools.llm.ask")
+def test_hitting_the_output_limit_is_reported_as_such(mock_ask):
+    """Running out of room and choosing to stop are different problems, and
+    trimming the ragged edge off the first makes them look identical."""
+    questions = [("Q one?", "s")]
+
+    def _ask(*args, meta=None, **kwargs):
+        if meta is not None:
+            meta["truncated"] = True
+        return _long_detailed([q for q, _ in questions])
+
+    mock_ask.side_effect = _ask
+    _, failure, shortfall = build_summary(**_kwargs(variant="detailed", sections=questions))
+
+    assert failure is None
+    assert "ran out of room" in shortfall
+
+
+@patch("thesis_tools.llm.ask")
+def test_a_missing_closing_section_counts_as_incomplete(mock_ask):
+    questions = [("Q one?", "s")]
+    mock_ask.return_value = _long_detailed([q for q, _ in questions], closing=False)
+
+    _, _, shortfall = build_summary(**_kwargs(variant="detailed", sections=questions))
+    assert "Where this leaves the thesis" in shortfall
+
+
+@patch("thesis_tools.llm.ask")
+def test_an_executive_summary_missing_a_required_heading_is_incomplete(mock_ask):
+    mock_ask.return_value = "## The short version\n\n**Answer:** Something."
+    _, _, shortfall = build_summary(**_kwargs())
+    assert shortfall and "What the evidence shows" in shortfall
+
+
+def test_the_headings_asked_for_and_the_headings_checked_are_the_same():
+    """Generated in one place so the instruction and the check can never
+    disagree about what a section heading looks like."""
+    from thesis_tools.exec_summary import _section_heading, _shortfall
+
+    questions = ["How do travellers use AI tools?"]
+    doc = f"## What this evidence base looks like\n\nx\n\n{_section_heading(1, questions[0])}\n\nProse.\n\n## Where this leaves the thesis\n\n- Act."
+    assert _shortfall(doc, "detailed", questions) is None

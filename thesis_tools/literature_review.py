@@ -781,7 +781,7 @@ def run_literature_review(inputs: LiteratureReviewInputs) -> str:
             key: _citation_marker_for(paper, inputs.style, ref_number_by_key)
             for key, paper in cited_papers_by_key.items()
         }
-        summary_md, summary_failure = build_summary(
+        summary_md, summary_failure, summary_shortfall = build_summary(
             variant=inputs.output_type,
             research_question=inputs.research_question or inputs.working_title,
             field=inputs.field,
@@ -823,6 +823,17 @@ def run_literature_review(inputs: LiteratureReviewInputs) -> str:
                 f"> ⚠️ **This is a skeleton, not a written summary.** The request to Claude failed "
                 f"({summary_failure}), so what follows lists what the sources say without "
                 "interpreting it. Re-run to try again.",
+                "",
+            ]
+        elif summary_shortfall:
+            # A document that stops early does not announce it — it reads
+            # like the opening of the right document. Saying so here is the
+            # only thing standing between the reader and a two-paragraph
+            # file that looks finished.
+            header += [
+                f"> ⚠️ **This summary is incomplete.** It was retried once and still came back "
+                f"short: {summary_shortfall}. What follows is real, but it is not the whole "
+                "document — re-run to try again.",
                 "",
             ]
         header += [DISCLAIMER, ""]

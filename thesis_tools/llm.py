@@ -155,6 +155,7 @@ def ask(
     cache: bool = False,
     cache_suffix: Optional[str] = None,
     usage_totals: Optional[Dict[str, int]] = None,
+    meta: Optional[Dict[str, object]] = None,
 ) -> Optional[str]:
     """Single-turn request. Returns the text response, or None on any failure.
 
@@ -184,6 +185,12 @@ def ask(
     `usage_totals` accumulates token counts across calls so a caller can
     report whether the cache is actually being hit. A cache that never reads
     is pure overhead, and the only way to know is to look.
+
+    `meta` receives the response's `stop_reason`. A caller that assembles a
+    document needs it: a reply that ended because it ran out of room is a
+    different thing from one the model chose to end, and trimming the ragged
+    edge off the first (see _trim_to_last_sentence) makes them look
+    identical on the page.
     """
     try:
         if cache_suffix and cache:
@@ -216,7 +223,11 @@ def ask(
             if errors is not None:
                 errors.append("the model returned an empty response")
             return None
-        if getattr(message, "stop_reason", None) == "max_tokens":
+        stop_reason = getattr(message, "stop_reason", None)
+        if meta is not None:
+            meta["stop_reason"] = stop_reason
+            meta["truncated"] = stop_reason == "max_tokens"
+        if stop_reason == "max_tokens":
             text = _trim_to_last_sentence(text)
         return text or None
     except Exception as exc:

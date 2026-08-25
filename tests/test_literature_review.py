@@ -590,8 +590,22 @@ _STANCE_MARKER = "You assess how a paper"
 _SYNTHESIS_MARKER = "You write ONE SECTION of a literature review"
 
 
+_EXEC_MARKER = "You write the EXECUTIVE SUMMARY"
+_DETAILED_MARKER = "You write a DETAILED SUMMARY"
+
+
+def _is_summary_prompt(system):
+    """Either summary variant — they are two prompts, and a helper that knows
+    only one silently routes the other into the section branch."""
+    return _EXEC_MARKER in system or _DETAILED_MARKER in system
+
+
 def _calls_matching(mock, marker):
     return [c for c in mock.call_args_list if marker in c.args[1]]
+
+
+def _summary_calls(mock):
+    return [c for c in mock.call_args_list if _is_summary_prompt(c.args[1])]
 
 
 @patch("thesis_tools.llm.get_client")
@@ -1012,14 +1026,11 @@ def test_run_reports_what_the_drafting_calls_actually_cost(mock_ask, mock_get_cl
     assert "nothing was read from the prompt cache" not in err
 
 
-_EXEC_MARKER = "You write the EXECUTIVE SUMMARY"
-
-
 def _ask_for_review(exec_text="## The short version\n\n**Answer:** Trust gates adoption (Doe, 2020)."):
     def _ask(client, system, user, model=None, max_tokens=300, errors=None, **kwargs):
         if _STANCE_MARKER in system:
             return "1: supports - confirms it.\n2: challenges - contradicts it."
-        if _EXEC_MARKER in system:
+        if _is_summary_prompt(system):
             return exec_text
         if _SYNTHESIS_MARKER in system:
             return "A written section citing (Doe, 2020)."
@@ -1041,7 +1052,7 @@ def test_a_run_produces_the_review_and_nothing_else_by_default(mock_ask, mock_ge
 
     assert Path(path) == tmp_path / "review.md"
     assert (tmp_path / "review.html").exists()
-    assert not _calls_matching(mock_ask, _EXEC_MARKER)  # not even drafted
+    assert not _summary_calls(mock_ask)  # not even drafted
     assert not list(tmp_path.glob("*exec-summary*"))
 
 
@@ -1093,7 +1104,7 @@ def test_summary_is_built_from_the_drafted_sections(mock_ask, mock_get_client, t
     inputs.sub_questions = ["Does digital transformation reduce environmental impact?", "What limits the effect?"]
     run_literature_review(inputs)
 
-    user_message = _calls_matching(mock_ask, _EXEC_MARKER)[0].args[2]
+    user_message = _summary_calls(mock_ask)[0].args[2]
     assert user_message.count("A written section citing (Doe, 2020).") == 2
     assert "What limits the effect?" in user_message
 
@@ -1104,7 +1115,7 @@ def test_a_failed_summary_is_labelled_a_skeleton(mock_ask, mock_get_client, tmp_
     mock_get_client.return_value = object()
 
     def _ask(client, system, user, model=None, max_tokens=300, errors=None, **kwargs):
-        if _EXEC_MARKER in system:
+        if _is_summary_prompt(system):
             if errors is not None:
                 errors.append("BadRequestError: prompt is too long")
             return None
@@ -1138,7 +1149,7 @@ def test_a_summary_over_failed_sections_says_so(mock_ask, mock_get_client, tmp_p
             return None
         if _STANCE_MARKER in system:
             return "1: supports - confirms it."
-        if _EXEC_MARKER in system:
+        if _is_summary_prompt(system):
             return "## The short version\n\n**Answer:** Something."
         return "Some prose."
 
@@ -1162,7 +1173,7 @@ def test_summary_length_can_be_forced(mock_ask, mock_get_client, tmp_path):
         _review_inputs(tmp_path, _two_sided_source(tmp_path), output_type="summary", summary_words=650)
     )
 
-    assert "about 650 words" in _calls_matching(mock_ask, _EXEC_MARKER)[0].kwargs["cache_suffix"]
+    assert "about 650 words" in _summary_calls(mock_ask)[0].kwargs["cache_suffix"]
 
 
 def test_an_unknown_output_type_is_refused(tmp_path):
@@ -1261,3 +1272,58 @@ def test_default_timestamped_names_never_collide_in_the_first_place(mock_ask, mo
 
     assert path.parent.name == "output"
     assert not (path.parent / "previous").exists()
+
+
+@patch("thesis_tools.llm.get_client")
+@patch("thesis_tools.llm.ask")
+def test_an_incomplete_summary_says_so_in_the_document(mock_ask, mock_get_client, tmp_path):
+    """The reported bug, end to end: a two-paragraph file was written as
+    though it were the finished deliverable."""
+    mock_get_client.return_value = object()
+
+    def _ask(client, system, user, model=None, max_tokens=300, errors=None, **kwargs):
+        if _STANCE_MARKER in system:
+            return "1: supports - confirms it."
+        if _is_summary_prompt(system):
+            return "## What this evidence base looks like\n\nThe review draws on 34 papers.\n\n## 1."
+        return "A written section citing (Doe, 2020)."
+
+    mock_ask.side_effect = _ask
+    inputs = _review_inputs(tmp_path, _two_sided_source(tmp_path), output_type="detailed")
+    inputs.sub_questions = ["Does digital transformation reduce impact?", "What limits the effect?"]
+    path = run_literature_review(inputs)
+
+    text = Path(path).read_text()
+    assert "This summary is incomplete" in text
+    assert "never written" in text
+    # It is not the skeleton — a real, partial document came back.
+    assert "skeleton, not a written summary" not in text
+
+
+@patch("thesis_tools.llm.get_client")
+@patch("thesis_tools.llm.ask")
+def test_a_complete_summary_carries_no_warning(mock_ask, mock_get_client, tmp_path):
+    mock_get_client.return_value = object()
+    questions = ["Does digital transformation reduce impact?", "What limits the effect?"]
+    complete = (
+        "## What this evidence base looks like\n\nShape.\n\n"
+        f"## 1. {questions[0]}\n\nProse (Doe, 2020).\n\n"
+        f"## 2. {questions[1]}\n\nProse (Doe, 2020).\n\n"
+        "## Across the questions\n\nPattern.\n\n"
+        "## Where this leaves the thesis\n\n- Act on it."
+    )
+
+    def _ask(client, system, user, model=None, max_tokens=300, errors=None, **kwargs):
+        if _STANCE_MARKER in system:
+            return "1: supports - confirms it."
+        if _is_summary_prompt(system):
+            return complete
+        return "A written section citing (Doe, 2020)."
+
+    mock_ask.side_effect = _ask
+    inputs = _review_inputs(tmp_path, _two_sided_source(tmp_path), output_type="detailed")
+    inputs.sub_questions = questions
+    text = Path(run_literature_review(inputs)).read_text()
+
+    assert "incomplete" not in text
+    assert "Where this leaves the thesis" in text

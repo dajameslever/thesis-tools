@@ -815,7 +815,22 @@ the actual result.
 
 `--summary-words` forces a length on either summary; `-o` moves the file.
 
-If the request to Claude fails, what gets written is a labelled skeleton.
+**A summary that stops early is caught, retried, and labelled.** A model
+that ends its turn halfway through does not announce it: the reply arrives
+with a normal stop reason and reads like the opening of the right document.
+One run of `--output-type detailed` produced its opening paragraph, a bare
+`## 1.` heading, and nothing else — and that file was written out as though
+it were finished. So the returned document is now checked against what was
+asked for (a section per sub-question, the closing section, and no ending on
+a heading with nothing under it). If it falls short it is retried once — the
+prompt prefix is cached, so the second attempt re-reads it at a tenth of the
+input price — and if it still falls short, the file says so in its header,
+naming what is missing. Running out of room at the model's output limit is
+reported separately from choosing to stop, because they are different
+problems.
+
+If the request to Claude fails outright, what gets written is a labelled
+skeleton.
 And if a section underneath it failed to draft, either summary says so in
 its header: the review flags that on the section itself, but a standalone
 summary has no section to flag it on, which would make it the one place a
