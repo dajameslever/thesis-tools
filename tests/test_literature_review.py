@@ -1175,3 +1175,52 @@ def test_default_output_paths_are_named_for_what_they_are():
 
     assert _default_output_path("review").name.startswith("literature-review-")
     assert _default_output_path("summary").name.startswith("executive-summary-")
+
+
+@patch("thesis_tools.llm.get_client")
+@patch("thesis_tools.llm.ask")
+def test_detailed_output_type_writes_a_detailed_summary(mock_ask, mock_get_client, tmp_path):
+    mock_get_client.return_value = object()
+    mock_ask.side_effect = _ask_for_review(
+        exec_text="## What this evidence base looks like\n\nSmall and recent (Doe, 2020)."
+    )
+
+    path = run_literature_review(
+        _review_inputs(tmp_path, _two_sided_source(tmp_path), output_type="detailed")
+    )
+
+    text = Path(path).read_text()
+    assert text.startswith("# Detailed Summary —")
+    assert "# Executive Summary" not in text
+    assert "## References" not in text  # not the review's shape either
+
+
+@patch("thesis_tools.llm.get_client")
+@patch("thesis_tools.llm.ask")
+def test_the_three_output_types_produce_three_different_documents(mock_ask, mock_get_client, tmp_path):
+    """Same evidence, same pipeline underneath — the only difference is what
+    the last call is asked for."""
+    mock_get_client.return_value = object()
+    written = {}
+    for output_type in ("review", "summary", "detailed"):
+        mock_ask.side_effect = _ask_for_review()
+        path = run_literature_review(
+            _review_inputs(
+                tmp_path,
+                _two_sided_source(tmp_path),
+                output_type=output_type,
+                output_path=str(tmp_path / f"{output_type}.md"),
+            )
+        )
+        written[output_type] = Path(path).read_text()
+
+    assert len({v[:40] for v in written.values()}) == 3
+    assert written["review"].startswith("# Literature Review")
+    assert written["summary"].startswith("# Executive Summary")
+    assert written["detailed"].startswith("# Detailed Summary")
+
+
+def test_detailed_summaries_get_their_own_default_filename():
+    from thesis_tools.literature_review import _default_output_path
+
+    assert _default_output_path("detailed").name.startswith("detailed-summary-")

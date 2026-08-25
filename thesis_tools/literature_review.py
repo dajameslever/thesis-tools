@@ -27,7 +27,7 @@ from typing import Dict, List, Optional, Tuple
 from . import llm
 from .citations import STYLES, format_citation, in_text_citation, reference_sort_key
 from .dedupe import dedupe_papers
-from .exec_summary import build_exec_summary
+from .exec_summary import build_summary
 from .outputs import write_output
 from .relevance import score_relevance, tokenize
 from .review_html import render_review_html
@@ -75,7 +75,7 @@ MAX_PROMPT_TEXT_CHARS = 300_000
 # The two deliverables this command can produce. One run makes one of them:
 # they are two presentations of the same evidence, and writing both by
 # default just leaves the reader deciding which to open.
-OUTPUT_TYPES = ("review", "summary")
+OUTPUT_TYPES = ("review", "summary", "detailed")
 
 
 
@@ -112,10 +112,15 @@ class LiteratureReviewInputs:
     # one-shot run, where the 1.25x write is never recouped.
     use_prompt_cache: bool = True
     # Which deliverable this run produces — one, not both:
-    #   "review"  — the full draft, one section per sub-question.
-    #   "summary" — the executive summary: the same evidence, answer first,
-    #               themed across the sub-questions rather than one section
-    #               each, with the disagreements stated as disagreements.
+    #   "review"   — the full draft, one section per sub-question.
+    #   "summary"  — the executive summary: the same evidence, answer first,
+    #                themed across the sub-questions rather than one section
+    #                each, with the disagreements stated as disagreements.
+    #   "detailed" — the other half of that coin: everything interesting the
+    #                sources say, sub-question by sub-question, with the
+    #                specifics (population, method, direction, period) that
+    #                make a finding usable rather than only the conclusion
+    #                drawn from it.
     # Both are written from the same drafted sections, so choosing "summary"
     # costs the same work; only the sections themselves are not written out.
     output_type: str = "review"
@@ -766,7 +771,7 @@ def run_literature_review(inputs: LiteratureReviewInputs) -> str:
         )
     lines[drafting_mode_index] = f"- **Drafting mode:** {mode}"
 
-    if inputs.output_type == "summary":
+    if inputs.output_type in ("summary", "detailed"):
         # Built from the sections drafted above rather than from the papers
         # again, so the summary can never claim something the review would
         # not have said — and using the same citation markers, so a claim can
@@ -776,7 +781,8 @@ def run_literature_review(inputs: LiteratureReviewInputs) -> str:
             key: _citation_marker_for(paper, inputs.style, ref_number_by_key)
             for key, paper in cited_papers_by_key.items()
         }
-        summary_md, summary_failure = build_exec_summary(
+        summary_md, summary_failure = build_summary(
+            variant=inputs.output_type,
             research_question=inputs.research_question or inputs.working_title,
             field=inputs.field,
             sections=drafted_sections,
@@ -792,8 +798,9 @@ def run_literature_review(inputs: LiteratureReviewInputs) -> str:
             cache=inputs.use_prompt_cache,
             usage_totals=usage_totals,
         )
+        title = "Detailed Summary" if inputs.output_type == "detailed" else "Executive Summary"
         header = [
-            f"# Executive Summary — {inputs.working_title}",
+            f"# {title} — {inputs.working_title}",
             "",
             f"_{_evidence_line(len(relevant), len(cited_papers_by_key), len(inputs.sub_questions))}_",
             "",
@@ -820,7 +827,7 @@ def run_literature_review(inputs: LiteratureReviewInputs) -> str:
             ]
         header += [DISCLAIMER, ""]
         report_text = "\n".join(header) + "\n" + summary_md.rstrip() + "\n"
-        html_title = "Executive Summary"
+        html_title = title
     else:
         report_text = "\n".join(lines)
         html_title = "Literature Review — Draft"
@@ -862,5 +869,7 @@ def _evidence_line(relevant: int, cited: int, sub_questions: int) -> str:
 
 def _default_output_path(output_type: str = "review") -> Path:
     timestamp = _dt.datetime.now().strftime("%Y%m%d-%H%M%S")
-    stem = "executive-summary" if output_type == "summary" else "literature-review"
+    stem = {"summary": "executive-summary", "detailed": "detailed-summary"}.get(
+        output_type, "literature-review"
+    )
     return Path("output") / f"{stem}-{timestamp}.md"

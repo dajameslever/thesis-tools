@@ -313,10 +313,12 @@ def _interactive_literature_review_inputs(project: ProjectState) -> LiteratureRe
 
     style = project.style or _prompt_style()
 
-    print("\nTwo ways to present the same evidence — pick one:")
-    print("  review  — the full draft, one section per sub-question (what you'd build a chapter from)")
-    print("  summary — an executive summary: answer first, themed across the sub-questions,")
-    print("            with the disagreements between sources stated as disagreements")
+    print("\nThree ways to present the same evidence — pick one:")
+    print("  review   — the full draft, one section per sub-question (what you'd build a chapter from)")
+    print("  summary  — an executive summary: answer first, themed across the sub-questions,")
+    print("             with the disagreements between sources stated as disagreements")
+    print("  detailed — everything interesting the sources say, question by question, with the")
+    print("             specifics behind each finding rather than only the conclusion")
     output_type = _prompt("Which do you want?", default="review").strip().lower()
     if output_type not in OUTPUT_TYPES:
         print(f"  (not one of {', '.join(OUTPUT_TYPES)} — defaulting to review)")
@@ -498,8 +500,10 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Which document to produce. 'review' (default) is the full draft, one section per "
         "sub-question. 'summary' is an executive summary of the same evidence: answer first, "
-        "themed across the sub-questions rather than one section each, with the disagreements "
-        "stated as disagreements",
+        "themed across the sub-questions, compressed to what a reader needs to know. 'detailed' "
+        "is the other half of that coin: everything interesting the sources say, sub-question by "
+        "sub-question, with the specifics — population, method, direction, period — that make a "
+        "finding usable",
     )
     lr.add_argument("-o", "--output", dest="output_path", help="Where to write the Markdown (default: output/literature-review-<timestamp>.md, or executive-summary-<timestamp>.md with --output-type summary)")
     lr.add_argument(
@@ -524,8 +528,8 @@ def _build_parser() -> argparse.ArgumentParser:
         "--summary-words",
         type=int,
         default=None,
-        help="With --output-type summary: force a target length. By default it scales with the "
-        "number of sources actually cited",
+        help="With --output-type summary or detailed: force a target length. By default it scales "
+        "with the number of sources actually cited",
     )
     lr.add_argument(
         "--no-prompt-cache",
@@ -935,7 +939,9 @@ def _run_literature_review_command(args: argparse.Namespace) -> int:
     )
     project.save(args.project_file)
 
-    label = "Executive summary" if inputs.output_type == "summary" else "Draft"
+    label = {"summary": "Executive summary", "detailed": "Detailed summary"}.get(
+        inputs.output_type, "Draft"
+    )
     print(f"\n{label} written to {report_path}")
     return 0
 

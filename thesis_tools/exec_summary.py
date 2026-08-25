@@ -55,8 +55,20 @@ WORDS_PER_SOURCE = 80
 MIN_WORDS = 400
 MAX_WORDS = 2500
 
+# The detailed variant answers a different question — "what is actually in
+# this literature?" rather than "what do I need to know?" — so it is scaled
+# to carry each source's specifics (population, method, direction, size,
+# period) rather than only the conclusions drawn from them.
+DETAILED_WORDS_PER_SOURCE = 200
+DETAILED_MIN_WORDS = 800
+DETAILED_MAX_WORDS = 4000
 
-def target_words_for(source_count: int) -> int:
+VARIANTS = ("summary", "detailed")
+
+
+def target_words_for(source_count: int, variant: str = "summary") -> int:
+    if variant == "detailed":
+        return max(DETAILED_MIN_WORDS, min(DETAILED_WORDS_PER_SOURCE * source_count, DETAILED_MAX_WORDS))
     return max(MIN_WORDS, min(WORDS_PER_SOURCE * source_count, MAX_WORDS))
 
 
@@ -83,7 +95,7 @@ def structure_for(source_count: int) -> Tuple[str, str]:
     return _STRUCTURE_BANDS[-1][1:]
 
 
-_SYSTEM_PROMPT = (
+_EXEC_SYSTEM_PROMPT = (
     "You write the EXECUTIVE SUMMARY of a literature review, for a reader who will not read the "
     "review itself. Work only from the drafted sections given to you — every claim must already be "
     "present in them. Invent no findings, no papers, and no citations.\n"
@@ -150,6 +162,9 @@ _SYSTEM_PROMPT = (
     "- Every section earns its place by changing what the reader would do. A section that only "
     "describes what the literature contains, without saying what follows from it, has not been "
     "written yet.\n"
+    "- Say each thing once. Findings must not restate the Answer, callouts must not restate "
+    "findings, and next actions must not restate either — each names what to do, not what was "
+    "already said. Never write the same point in two different wordings.\n"
     "- No bullet-point dumps of paper titles anywhere.\n"
     "\n" + llm.ACADEMIC_STYLE_NOTE
 )
@@ -161,6 +176,81 @@ _SYSTEM_PROMPT = (
 # their own paragraphs here rather than only being asked for in the prompt,
 # because this is the one block of the document that has to land.
 _SCQA_LABELS = ("**Complication:**", "**Question:**", "**Answer:**")
+
+
+_NO_REPETITION_RULES = (
+    "REPETITION IS THE FAILURE MODE OF THIS DOCUMENT. The same evidence reaches several "
+    "sub-questions, and restating it under each one turns a detailed summary into a long one. "
+    "Enforce all of these:\n"
+    "- State each source's contribution ONCE, in full, under the sub-question it bears on most "
+    "directly. Where it also bears on a later one, write only what is ADDITIONAL there and refer "
+    "back with the citation alone — never restate the finding.\n"
+    "- Never open a section by restating its own sub-question. The heading has already said it.\n"
+    "- Never state a finding and then restate it as its own implication ('X found Y. This "
+    "suggests Y.'). If the implication is not more than the finding, leave it out.\n"
+    "- Never write the same point in two different wordings anywhere in the document.\n"
+    "- Write no section that recaps the document. There is no closing summary: the reader has "
+    "just read it.\n"
+)
+
+_DETAILED_SYSTEM_PROMPT = (
+    "You write a DETAILED SUMMARY of a literature review: what is actually in this literature, "
+    "sub-question by sub-question, for a reader who wants everything interesting the sources say "
+    "without reading the full review. Work only from the drafted sections given to you — every "
+    "claim must already be present in them. Invent no findings, no papers, no citations, and no "
+    "specifics that the sections do not state.\n"
+    "\n"
+    "This is NOT an executive summary. Do not lead with an answer, do not compress to key lines, "
+    "and do not drop a finding because it is minor. Detail is the point: what was studied, on "
+    "whom and where, by what method, what was found, in which direction and how strongly, and "
+    "when. Prefer the specific to the evaluative — 'significant', 'important' and 'robust' carry "
+    "no information on their own. Where the sections do not give a detail, say what they do give "
+    "rather than filling the gap.\n"
+    "\n"
+    "Structure, using these Markdown headings:\n"
+    "\n"
+    "## What this evidence base looks like\n"
+    "Three or four sentences on the SHAPE of the evidence, not its findings: how much there is, "
+    "where it clusters (period, setting, population, method), and where it is thin. No findings "
+    "here — they belong to the sub-questions, and stating them twice is the one thing this "
+    "document must not do.\n"
+    "\n"
+    "## <number>. <the sub-question, copied exactly>\n"
+    "One section per sub-question, in the order given, numbered. Open directly with what the "
+    "sources establish — continuous prose, not a list of papers, each claim cited. Then, ONLY "
+    "where there is something real to say, add any of these as their own short paragraph, "
+    "starting with the bold lead-in exactly as written:\n"
+    "  **Where they diverge:** who disagrees with whom, on what specifically, and what would "
+    "settle it.\n"
+    "  **Notable:** what a careful reader would want flagged here — an outlier, a single-source "
+    "claim, a design stronger or weaker than the rest, a definition used differently, a result "
+    "that has aged badly.\n"
+    "  **Not covered:** what this sub-question needs that no source in the set supplies.\n"
+    "Omit any lead-in that would be empty. A heading followed by 'none' is noise.\n"
+    "\n"
+    "## Across the questions\n"
+    "ONLY what no single sub-question above could carry: a pattern that becomes visible only when "
+    "the questions are set side by side — a method or population common to all of them, a "
+    "definition that shifts between them, a source that answers one question well and another "
+    "badly. If a point already appears above, it is not eligible for this section. If nothing "
+    "qualifies, write one sentence saying so and move on.\n"
+    "\n"
+    "## Where this leaves the thesis\n"
+    "Three to six concrete next steps, each a single line, verb first, each naming what it would "
+    "establish and which section above it comes from. Nothing that would read the same way for a "
+    "different thesis in a different field.\n"
+    "\n"
+    + _NO_REPETITION_RULES
+    + "\n"
+    "Rules:\n"
+    "- CITE EVERY CLAIM using the exact in-text citation markers as they already appear in the "
+    "drafted sections — copy them character for character. Never invent a marker, a year, or an "
+    "author name, and never cite a paper that is not in the sections given.\n"
+    "- Paraphrase. Do not quote the sections back.\n"
+    "- A sub-question with nothing behind it gets one honest sentence saying so, not a paragraph "
+    "explaining that it has nothing behind it.\n"
+    "\n" + llm.ACADEMIC_STYLE_NOTE
+)
 
 
 def _space_out_scqa(text: str) -> str:
@@ -211,8 +301,9 @@ def _evidence_base_note(paper_count: int, cited_count: int, tensions: List[str],
     return " ".join(parts)
 
 
-def build_exec_summary(
+def build_summary(
     *,
+    variant: str = "summary",
     research_question: str,
     field: str,
     sections: List[Tuple[str, str]],
@@ -230,10 +321,19 @@ def build_exec_summary(
 ) -> Tuple[str, Optional[str]]:
     """Returns (markdown, failure reason).
 
+    `variant` picks which document this is. "summary" is the executive
+    summary: answer first, themed across the sub-questions, compressed to
+    what a reader needs to know. "detailed" is the other half of the same
+    coin — everything interesting the sources say, sub-question by
+    sub-question, with the specifics that make a finding usable. They are
+    built from identical inputs and differ only in what they are asked for.
+
     The failure reason matters for the same reason it does in the review: the
     fallback is a skeleton, not a summary, and shipping it silently under the
     same title would misrepresent it.
     """
+    if variant not in VARIANTS:
+        raise ValueError(f"Unknown summary variant '{variant}'. Choose from: {', '.join(VARIANTS)}")
     written = [(q, t) for q, t in sections if t.strip()]
     if not written:
         return (
@@ -241,7 +341,7 @@ def build_exec_summary(
             "the review produced no sections",
         )
 
-    target = words or target_words_for(len(cited_papers))
+    target = words or target_words_for(len(cited_papers), variant)
     failure: Optional[str] = None
 
     if client is not None:
@@ -260,17 +360,27 @@ def build_exec_summary(
         # breakpoint; the instruction, which carries the varying word target,
         # goes after it. Same reasoning as the synthesis call.
         user_message = "\n\n".join(context) + "\n\nDrafted sections:\n\n" + "\n\n".join(blocks)
-        findings, callouts = structure_for(len(cited_papers))
-        instruction = (
-            f"Write the executive summary of the review above, aiming for about {target} words. "
-            f"This evidence base supports {findings} findings under 'What the evidence shows' and "
-            f"{callouts} entries under 'Worth calling out' — write that many, each a distinct "
-            "point, rather than padding fewer ones out to the word count."
-        )
+        if variant == "detailed":
+            system_prompt = _DETAILED_SYSTEM_PROMPT
+            instruction = (
+                f"Write the detailed summary of the review above, aiming for about {target} words "
+                f"across all {len(written)} sub-question(s) — a guide to the whole document, not a "
+                "quota for each section: a sub-question with more behind it earns more room than "
+                "one with less. Say each thing once."
+            )
+        else:
+            system_prompt = _EXEC_SYSTEM_PROMPT
+            findings, callouts = structure_for(len(cited_papers))
+            instruction = (
+                f"Write the executive summary of the review above, aiming for about {target} words. "
+                f"This evidence base supports {findings} findings under 'What the evidence shows' "
+                f"and {callouts} entries under 'Worth calling out' — write that many, each a "
+                "distinct point, rather than padding fewer ones out to the word count."
+            )
         errors: List[str] = []
         result = llm.ask(
             client,
-            _SYSTEM_PROMPT,
+            system_prompt,
             user_message,
             model=model,
             max_tokens=max(int(target * 2.5), 1500),
@@ -289,7 +399,7 @@ def build_exec_summary(
         failure = errors[0] if errors else "the request returned nothing"
 
     return _fallback_summary(
-        research_question, written, tensions, no_coverage, cited_papers, markers_by_key, style
+        research_question, written, tensions, no_coverage, cited_papers, markers_by_key, style, variant
     ), failure
 
 
@@ -356,15 +466,16 @@ def _fallback_summary(
     cited_papers: List[Paper],
     markers_by_key: Dict[str, str],
     style: str,
+    variant: str = "summary",
 ) -> str:
     """A skeleton assembled from what is already known without asking Claude:
     which sub-questions have support, which are contested, which have none.
-    It is deliberately not written as prose — an executive summary that
-    nobody wrote is a form to fill in, and presenting it as anything more
-    would be the same failure the review's own fallback guards against."""
+    It is deliberately not written as prose — a summary that nobody wrote is
+    a form to fill in, and presenting it as anything more would be the same
+    failure the review's own fallback guards against."""
     covered = [q for q, _ in sections if q not in no_coverage]
     lines = [
-        "## The short version",
+        "## What this evidence base looks like" if variant == "detailed" else "## The short version",
         "",
         f"**Situation:** {len(cited_papers)} source(s) were reviewed against the question "
         f"\"{research_question}\".",

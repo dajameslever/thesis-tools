@@ -668,18 +668,38 @@ itself and sub-questions with no coverage at all (i.e. candidate
 contributions for your thesis) — and a reference list containing only the
 papers actually cited in the draft.
 
-### The other output: an executive summary
+### The other outputs: an executive summary, or a detailed one
 
-`--output-type summary` produces an executive summary **instead of** the
-review — one run makes one document, not both. Same evidence, organised for
-someone who will not read a full review: a supervisor, a panel, or you
-deciding where the contribution is. Under the hood the sections are still
-drafted first and the summary is written from them, so it can never claim
-something the review would not have said, and it cites with the same in-text
-markers; the sections simply are not written out.
+`--output-type` picks which single document a run produces — one, never
+several:
 
-It follows the structure consulting practice uses for an executive summary,
-adapted to literature rather than to a business case:
+| `--output-type` | What you get | Length |
+|---|---|---|
+| `review` (default) | The full draft, one section per sub-question — what you'd build a chapter from | 250–2,000 words *per question* |
+| `summary` | Executive summary: answer first, themed across the questions, compressed to what a reader needs to know | 400–2,500 words |
+| `detailed` | Everything interesting the sources say, question by question, with the specifics behind each finding | 800–4,000 words |
+
+Under the hood all three run the same pipeline: the sections are drafted
+first, and the summaries are written *from those sections*. So a summary can
+never claim something the review would not have said, and all three cite
+with the same in-text markers. For `summary` and `detailed` the sections
+simply are not written out.
+
+**Neither summary repeats itself.** The same sources reach several
+sub-questions, and restating them under each is what turns a detailed
+summary into a merely long one — so each source's contribution is stated
+once, in full, under the question it bears on most directly; where it also
+bears on a later one, only what is *additional* is written there. Sections
+never open by restating their own heading, findings are never restated as
+their own implications, and neither document has a closing recap — the
+reader has just read it.
+
+#### `--output-type summary`
+
+For someone who will not read a full review: a supervisor, a panel, or you
+deciding where the contribution is. It follows the structure consulting
+practice uses for an executive summary, adapted to literature rather than to
+a business case:
 
 - **The short version** — Situation, Complication, Question, Answer, in four
   sentences. The Answer is the headline: a reader who stops there still
@@ -714,12 +734,41 @@ with the sources actually cited (400–2,500 words), and so does *how much is
 said*: four sources buy two to three findings, sixty buy five to seven.
 Length alone is not proportionality — a long summary that still makes three
 points has padded three points — so the number of findings and callouts is
-scaled and stated in the request, not left to the model. `--summary-words`
-forces a length; `-o` moves the file.
+scaled and stated in the request, not left to the model.
+
+#### `--output-type detailed`
+
+The other half of that coin. Where the executive summary asks *what do I
+need to know*, this one asks *what is actually in this literature* — and
+answers it question by question, keeping the specifics that make a finding
+usable rather than only the conclusion drawn from it: what was studied, on
+whom and where, by what method, in which direction and how strongly, and
+when. Evaluative words carry no information on their own, so the prompt
+rejects "significant" / "important" / "robust" standing alone in place of
+the actual result.
+
+- **What this evidence base looks like** — three or four sentences on the
+  *shape* of the evidence: how much there is, where it clusters (period,
+  setting, population, method), where it is thin. Deliberately no findings
+  here; those belong to the questions.
+- **One section per sub-question**, numbered, opening directly with what the
+  sources establish. Then — only where there is something real to say —
+  **Where they diverge**, **Notable**, and **Not covered**. Any that would be
+  empty is omitted: a heading followed by "none" is noise, and a question
+  with nothing behind it costs one honest sentence rather than a paragraph
+  explaining that it has nothing behind it.
+- **Across the questions** — strictly limited to what no single question
+  could carry: a method or population common to all of them, a definition
+  that shifts between them, a source that answers one question well and
+  another badly. Anything already said above is ineligible.
+- **Where this leaves the thesis** — the same actionable close, each step
+  naming what it would establish and which section it came from.
+
+`--summary-words` forces a length on either summary; `-o` moves the file.
 
 If the request to Claude fails, what gets written is a labelled skeleton.
-And if a section underneath it failed to draft, the summary says so in its
-header: the review flags that on the section itself, but a standalone
+And if a section underneath it failed to draft, either summary says so in
+its header: the review flags that on the section itself, but a standalone
 summary has no section to flag it on, which would make it the one place a
 reader could never learn that the evidence beneath is thinner than it looks.
 

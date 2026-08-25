@@ -1,11 +1,13 @@
 from unittest.mock import patch
 
+import pytest
+
 from thesis_tools.exec_summary import (
     MAX_SECTION_CHARS,
     _cites,
     _fit_sections,
     _with_references,
-    build_exec_summary,
+    build_summary,
     target_words_for,
 )
 from thesis_tools.sources.base import Paper
@@ -66,7 +68,7 @@ def test_prompt_asks_for_the_pyramid_structure_and_the_debate(mock_ask):
     """The whole point of the second output: answer first, themes across the
     sub-questions, and the disagreements stated rather than averaged away."""
     mock_ask.return_value = "## The short version\n\n**Answer:** X."
-    build_exec_summary(**_kwargs())
+    build_summary(**_kwargs())
 
     system = mock_ask.call_args.args[1]
     for required in (
@@ -87,7 +89,7 @@ def test_prompt_asks_for_the_pyramid_structure_and_the_debate(mock_ask):
 @patch("thesis_tools.llm.ask")
 def test_sections_are_sent_and_the_word_target_stays_out_of_the_cached_prefix(mock_ask):
     mock_ask.return_value = "## The short version"
-    build_exec_summary(**_kwargs(sections=[("Q1", "Body of section one."), ("Q2", "Body of section two.")]))
+    build_summary(**_kwargs(sections=[("Q1", "Body of section one."), ("Q2", "Body of section two.")]))
 
     user_message = mock_ask.call_args.args[2]
     assert "Body of section one." in user_message and "Body of section two." in user_message
@@ -99,7 +101,7 @@ def test_sections_are_sent_and_the_word_target_stays_out_of_the_cached_prefix(mo
 @patch("thesis_tools.llm.ask")
 def test_contested_and_uncovered_questions_are_handed_to_the_model(mock_ask):
     mock_ask.return_value = "## The short version"
-    build_exec_summary(**_kwargs(tensions=["Does AI displace OTAs?"], no_coverage=["What about rail?"]))
+    build_summary(**_kwargs(tensions=["Does AI displace OTAs?"], no_coverage=["What about rail?"]))
 
     user_message = mock_ask.call_args.args[2]
     assert "Does AI displace OTAs?" in user_message
@@ -115,7 +117,7 @@ def test_failure_is_reported_and_falls_back_to_a_labelled_skeleton(mock_ask):
         return None
 
     mock_ask.side_effect = _fail
-    text, failure = build_exec_summary(**_kwargs(tensions=["Does AI displace OTAs?"]))
+    text, failure = build_summary(**_kwargs(tensions=["Does AI displace OTAs?"]))
 
     assert failure == "BadRequestError: prompt is too long"
     assert "Not written" in text
@@ -123,13 +125,13 @@ def test_failure_is_reported_and_falls_back_to_a_labelled_skeleton(mock_ask):
 
 
 def test_no_client_produces_the_skeleton_without_claiming_a_failure():
-    text, failure = build_exec_summary(**_kwargs(client=None))
+    text, failure = build_summary(**_kwargs(client=None))
     assert failure is None
     assert "## The short version" in text
 
 
 def test_empty_review_is_not_summarized():
-    text, failure = build_exec_summary(**_kwargs(sections=[("Q", "   ")]))
+    text, failure = build_summary(**_kwargs(sections=[("Q", "   ")]))
     assert failure == "the review produced no sections"
     assert "nothing to summarize" in text
 
@@ -204,7 +206,7 @@ def test_scqa_lands_as_four_paragraphs_however_the_model_lays_it_out():
 @patch("thesis_tools.llm.ask")
 def test_the_written_summary_is_spaced_before_it_is_returned(mock_ask):
     mock_ask.return_value = "## The short version\n\n**Situation:** A.\n**Complication:** B.\n**Answer:** C."
-    text, _ = build_exec_summary(**_kwargs())
+    text, _ = build_summary(**_kwargs())
     assert "A.\n\n**Complication:**" in text
 
 
@@ -214,7 +216,7 @@ def test_the_instruction_scales_the_number_of_points_to_the_evidence(mock_ask):
     about the same ones."""
     mock_ask.return_value = "## The short version"
     papers = [_paper(f"Author{i}", 2020 + i % 5, f"10.1/{i}", f"Paper {i}") for i in range(40)]
-    build_exec_summary(**_kwargs(cited_papers=papers, markers_by_key={p.key(): "" for p in papers}))
+    build_summary(**_kwargs(cited_papers=papers, markers_by_key={p.key(): "" for p in papers}))
 
     suffix = mock_ask.call_args.kwargs["cache_suffix"]
     assert "five to seven findings" in suffix
@@ -224,7 +226,7 @@ def test_the_instruction_scales_the_number_of_points_to_the_evidence(mock_ask):
 @patch("thesis_tools.llm.ask")
 def test_a_small_evidence_base_is_told_to_stay_small(mock_ask):
     mock_ask.return_value = "## The short version"
-    build_exec_summary(**_kwargs())  # two cited papers
+    build_summary(**_kwargs())  # two cited papers
 
     suffix = mock_ask.call_args.kwargs["cache_suffix"]
     assert "two to three findings" in suffix
@@ -234,9 +236,84 @@ def test_a_small_evidence_base_is_told_to_stay_small(mock_ask):
 def test_every_finding_is_required_to_state_what_follows_from_it():
     """McKinsey-style means actionable: a section that describes what the
     literature contains without saying what to do differently is not done."""
-    from thesis_tools.exec_summary import _SYSTEM_PROMPT
+    from thesis_tools.exec_summary import _EXEC_SYSTEM_PROMPT as _SYSTEM_PROMPT
 
     assert "So:" in _SYSTEM_PROMPT
     assert "not finished" in _SYSTEM_PROMPT
     assert "changing what the reader would do" in _SYSTEM_PROMPT
     assert "read more widely" in _SYSTEM_PROMPT  # named as the thing to reject
+
+
+@patch("thesis_tools.llm.ask")
+def test_detailed_variant_uses_its_own_prompt_and_scale(mock_ask):
+    """The detailed summary answers 'what is actually in this literature?',
+    not 'what do I need to know?' — a different prompt, and enough room to
+    carry each source's specifics rather than only the conclusions."""
+    from thesis_tools.exec_summary import _DETAILED_SYSTEM_PROMPT, _EXEC_SYSTEM_PROMPT
+
+    mock_ask.return_value = "## What this evidence base looks like\n\nSmall and recent."
+    build_summary(**_kwargs(variant="detailed"))
+
+    assert mock_ask.call_args.args[1] is _DETAILED_SYSTEM_PROMPT
+    assert mock_ask.call_args.args[1] is not _EXEC_SYSTEM_PROMPT
+    # Two cited papers: 800 (the detailed floor), not 400 (the exec floor).
+    assert "about 800 words" in mock_ask.call_args.kwargs["cache_suffix"]
+
+
+def test_detailed_lengths_scale_above_the_executive_summary():
+    from thesis_tools.exec_summary import DETAILED_MAX_WORDS, MAX_WORDS
+
+    for sources in (1, 5, 20, 100):
+        assert target_words_for(sources, "detailed") > target_words_for(sources, "summary")
+    assert target_words_for(100, "detailed") == DETAILED_MAX_WORDS > MAX_WORDS
+
+
+def test_the_detailed_prompt_forbids_restating_the_same_evidence():
+    """The same sources reach several sub-questions; restating them under
+    each turns a detailed summary into a merely long one."""
+    from thesis_tools.exec_summary import _DETAILED_SYSTEM_PROMPT as prompt
+
+    assert "REPETITION IS THE FAILURE MODE" in prompt
+    assert "ONCE" in prompt                          # each contribution stated once
+    assert "only what is ADDITIONAL" in prompt       # later mentions add, never restate
+    assert "restating its own sub-question" in prompt
+    assert "no closing summary" in prompt.lower() or "no section that recaps" in prompt.lower()
+    assert "two different wordings" in prompt
+
+
+def test_the_executive_summary_prompt_forbids_it_too():
+    from thesis_tools.exec_summary import _EXEC_SYSTEM_PROMPT as prompt
+
+    assert "Say each thing once" in prompt
+    assert "two different wordings" in prompt
+
+
+def test_the_detailed_prompt_asks_for_specifics_not_adjectives():
+    from thesis_tools.exec_summary import _DETAILED_SYSTEM_PROMPT as prompt
+
+    assert "on whom and where" in prompt
+    assert "'significant', 'important' and 'robust' carry no information" in prompt
+    assert "Omit any lead-in that would be empty" in prompt  # no "none" filler
+
+
+def test_empty_sub_question_sections_are_not_padded_out():
+    """A sub-question with nothing behind it should cost one sentence, not a
+    paragraph explaining that it has nothing behind it."""
+    from thesis_tools.exec_summary import _DETAILED_SYSTEM_PROMPT as prompt
+
+    assert "one honest sentence saying so" in prompt
+
+
+def test_an_unknown_variant_is_refused():
+    with pytest.raises(ValueError, match="Unknown summary variant"):
+        build_summary(**_kwargs(variant="deck"))
+
+
+@patch("thesis_tools.llm.ask")
+def test_the_detailed_fallback_is_not_shaped_like_an_executive_summary(mock_ask):
+    mock_ask.return_value = None
+    text, failure = build_summary(**_kwargs(variant="detailed"))
+
+    assert failure is not None
+    assert text.startswith("## What this evidence base looks like")
+    assert "## The short version" not in text
