@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Dict, Iterator, List, Optional
 
 from .. import llm
+from ..outputs import write_view
 from ..citations import STYLES
 from ..relevance import score_relevance
 from ..sources.base import Paper, slug_for_paper
@@ -280,8 +281,9 @@ def run_library_indexer(inputs: LibraryIndexerInputs) -> Dict[str, object]:
         relevance_scores=relevance_scores,
     )
     report_path.parent.mkdir(parents=True, exist_ok=True)
-    # A living view of the library as it stands now, overwritten in place.
-    report_path.write_text(report_text, encoding="utf-8")
+    # A living view of the library as it stands now, overwritten in place —
+    # unless it was pointed at output/, where every version is kept.
+    write_view(report_path, report_text)
 
     organized: List = []
     if inputs.organize:

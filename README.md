@@ -793,18 +793,11 @@ style requirements before submitting.
 
 Two kinds of file, two different rules.
 
-**Living views** — `library/visualization.html`, `library/literature_matrix.xlsx`,
-`library/library.md`. These describe your library *as it stands right now*,
-so re-running after adding papers is meant to replace them: an old snapshot
-of a library you have since changed isn't history, it's a stale picture of
-something that no longer exists. They're overwritten in place, and their
-fixed names are what your bookmark, your open tab and the page's own
-download link all point at.
-
-**Outputs** — everything under `output/`: Part 1's report, Part 3's review,
-executive summary and detailed summary, and the HTML beside each. These are
-documents you produced at a moment in time, and you'll want to compare
-today's draft against last week's. They're kept.
+**Documents are always kept.** Everything `literature-review` produces — the
+review, the executive summary, the detailed summary, and the HTML beside
+each — plus Part 1's report. These are things you made at a moment in time,
+and you'll want today's against last week's. They are kept **wherever you
+write them**: in `output/`, or anywhere else you point `-o`.
 
 Most already carry a timestamp in the filename and pile up on their own:
 
@@ -816,12 +809,27 @@ output/
   detailed-summary-20260825-081402.md
 ```
 
-The one case that needs help is reusing an explicit `-o path` across runs —
-that names one fixed file, and writing it again would destroy the earlier
-version. Instead the existing file moves into a `previous/` folder beside
-it, stamped with **its own** modification time (when it was produced, not
-when it was displaced), so the folder reads as a history of runs. The path
-you named keeps pointing at the newest.
+The case that needs help is reusing one explicit `-o path` across runs, since
+that names a single fixed file. There the existing file moves into a
+`previous/` folder beside it, stamped with **its own** modification time
+(when it was produced, not when it was displaced), so the folder reads as a
+history of runs. The path you named keeps pointing at the newest.
+
+**Living views are overwritten** — `library/visualization.html`,
+`library/literature_matrix.xlsx`, `library/library.md`. These describe your
+library *as it stands right now*, so re-running after adding papers is meant
+to replace them: an old snapshot of a library you've since changed isn't
+history, it's a stale picture of something that no longer exists. Their
+fixed names are what your bookmark, your open tab and the page's own
+download link all point at.
+
+**...unless you put one in `output/`.** Which rule applies is decided by
+where the file lands, not by which command wrote it. Point the visualization
+at `output/visualization.html` and every version is kept, exactly as it
+would be for any other file there. "Anything in `output/` is kept" is a rule
+you can predict from a path; "the review is kept and the visualization
+isn't" is one you'd have to remember per command, and it breaks the moment
+you point one command at the other's folder.
 
 Neither rule applies to state and caches — `index.json`, the stance cache,
 the extracted `.txt` files, downloaded PDFs. Those are meant to be rewritten
@@ -848,8 +856,8 @@ thesis_tools/
   subquestions.py     Sub-question generation + supports/challenges/mixed stance analysis
   stance_cache.py     Persists analyze_subquestions()'s per-paper Claude classifications so an
                       unchanged paper/question set is never reclassified (used by visualize-library)
-  outputs.py          Keeps the previous version of anything in output/ when a fixed path is
-                      reused (library views stay living and are overwritten in place)
+  outputs.py          Documents are kept wherever written; library views are overwritten in
+                      place unless they land in output/, where the destination's rule wins
   review_html.py      Renders Part 3's draft as a self-contained HTML page
   citations.py        APA / MLA / Chicago / Harvard / IEEE reference-list formatting, plus
                       in_text_citation() for the parenthetical/numbered marker used inline

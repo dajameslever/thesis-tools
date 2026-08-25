@@ -2,7 +2,13 @@ import os
 import time
 from pathlib import Path
 
-from thesis_tools.outputs import PREVIOUS_DIR_NAME, archive_existing, write_output
+from thesis_tools.outputs import (
+    PREVIOUS_DIR_NAME,
+    archive_existing,
+    is_kept_location,
+    write_output,
+    write_view,
+)
 
 
 def test_first_write_has_nothing_to_keep(tmp_path):
@@ -83,3 +89,45 @@ def test_write_output_creates_missing_parent_directories(tmp_path):
     path = tmp_path / "nested" / "deeper" / "review.md"
     write_output(path, "v1")
     assert path.read_text() == "v1"
+
+
+def test_where_the_file_lands_decides_the_rule_not_who_wrote_it(tmp_path):
+    """"Anything in output is kept" is a rule you can predict from the path.
+    "The review is kept and the visualization is not" is one you have to
+    remember per command — and it breaks the moment you point one command at
+    the other's folder."""
+    assert is_kept_location(tmp_path / "output" / "review.md")
+    assert is_kept_location(tmp_path / "output" / "nested" / "review.md")
+    assert not is_kept_location(tmp_path / "library" / "visualization.html")
+    assert not is_kept_location(tmp_path / "outputs" / "review.md")  # not the same folder
+
+
+def test_a_living_view_is_overwritten_in_its_own_folder(tmp_path):
+    path = tmp_path / "library" / "visualization.html"
+    write_view(path, "v1")
+    assert write_view(path, "v2") is None
+
+    assert path.read_text() == "v2"
+    assert not (path.parent / PREVIOUS_DIR_NAME).exists()
+
+
+def test_a_living_view_pointed_at_output_is_kept_like_everything_there(tmp_path):
+    """The reported problem: a visualization written into output/ was
+    silently overwritten, because the rule was implemented per command
+    instead of per location."""
+    path = tmp_path / "output" / "visualization.html"
+    write_view(path, "v1")
+    archived = write_view(path, "v2")
+
+    assert path.read_text() == "v2"
+    assert archived is not None and archived.read_text() == "v1"
+
+
+def test_documents_are_kept_wherever_they_are_written(tmp_path):
+    """The converse is not symmetric: a document is a document even outside
+    output/, so -o pointing somewhere else must not silently lose one."""
+    path = tmp_path / "elsewhere" / "draft.md"
+    write_output(path, "v1")
+    archived = write_output(path, "v2")
+
+    assert archived is not None and archived.read_text() == "v1"

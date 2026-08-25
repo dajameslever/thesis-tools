@@ -506,3 +506,17 @@ def test_the_visualization_is_a_living_view_not_a_versioned_one(tmp_path):
         "literature_matrix.xlsx",
         "visualization.html",
     ]
+
+
+def test_a_visualization_written_into_output_is_kept(tmp_path):
+    """Whichever command wrote it, output/ means every version is kept."""
+    index_path = _one_paper_index(tmp_path / "library" / "index.json")
+    output_path = tmp_path / "output" / "visualization.html"
+
+    for _ in range(3):
+        assert main(["visualize-library", "--index-path", str(index_path), "--output", str(output_path)]) == 0
+
+    kept = sorted(p.name for p in (tmp_path / "output" / "previous").iterdir())
+    assert sum(name.startswith("visualization-") for name in kept) == 2
+    assert sum(name.startswith("literature_matrix-") for name in kept) == 2
+    assert output_path.is_file()
