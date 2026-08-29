@@ -1078,3 +1078,11 @@ python -m pytest
 Parts 1, 2, and 3 are done. Contributions/ideas welcome — this is meant to
 keep growing (e.g. exporting the draft review straight into a Word doc, or
 turning the sub-questions into a full thesis outline).
+
+## Disclaimer
+
+This tool is to help you think better and get ideas, it is not a replacement for you actually researching and writing your literature review. 
+Please do not copy and paste section 3. 
+Please review your academic rules on the use of AI and LLMs. AI Hallucinates so do your homework. 
+
+
