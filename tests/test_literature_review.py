@@ -1333,3 +1333,100 @@ def test_a_complete_summary_carries_no_warning(mock_ask, mock_get_client, tmp_pa
 
     assert "incomplete" not in text
     assert "Where this leaves the thesis" in text
+
+
+# --- alignment with the taught marking criteria ---------------------------
+# Each of these pins one requirement from the university's dissertation
+# bootcamp material. They are deliberately about the PROMPT rather than the
+# output: the prompt is the only place the toolkit can enforce them, and an
+# edit that quietly drops one would otherwise pass every other test.
+
+
+def test_the_review_is_organised_by_theme_not_by_source():
+    """"Not a descriptive list of the material available, or a set of
+    summaries" — the difference between a review and an annotated
+    bibliography."""
+    from thesis_tools.literature_review import _synthesis_system_prompt
+
+    prompt = _synthesis_system_prompt()
+    assert "SYNTHESIZE, don't summarize source-by-source" in prompt
+    assert "laundry list" in prompt
+    assert "never one paper after another" in prompt
+
+
+def test_sections_must_appraise_the_evidence_not_just_report_it():
+    """"Critically appraise strengths and weaknesses" — the Evaluate step of
+    Describe / Interpret / Evaluate / Synthesise, which is the one most
+    drafts skip."""
+    from thesis_tools.literature_review import _synthesis_system_prompt
+
+    prompt = _synthesis_system_prompt()
+    assert "APPRAISE THE EVIDENCE" in prompt
+    for critical_lens_question in ("sample", "bias", "assumption", "dated", "outruns the evidence"):
+        assert critical_lens_question in prompt, critical_lens_question
+    # And balance: "Keep a balanced perspective ... the strengths that you can
+    # build on as well as any problems or gaps."
+    assert "strength as readily as a weakness" in prompt
+
+
+def test_disagreements_must_be_explained_not_merely_noted():
+    """"Contradictory findings — do not simply note differences; you need to
+    explain them.\""""
+    from thesis_tools.literature_review import _synthesis_system_prompt
+
+    prompt = _synthesis_system_prompt()
+    assert "EXPLAIN THE DISAGREEMENT" in prompt
+    assert "do not merely note that it exists" in prompt
+    assert "ACCOUNT for the difference" in prompt
+
+
+def test_sections_must_draw_out_implications():
+    """"So what? — Draw out implications of your discussions.\""""
+    from thesis_tools.literature_review import _synthesis_system_prompt
+
+    prompt = _synthesis_system_prompt()
+    assert "SO WHAT" in prompt
+    assert "the student's own research" in prompt
+
+
+def test_definitions_and_theoretical_framing_are_expected():
+    """Expected content includes "definitions and discussion of terminology"
+    and theoretical underpinnings, in summary at MA/MSc level."""
+    from thesis_tools.literature_review import _synthesis_system_prompt
+
+    prompt = _synthesis_system_prompt()
+    assert "DEFINITIONS AND FRAMEWORKS" in prompt
+    assert "theoretical" in prompt
+    assert "not an exposition of them" in prompt  # summary depth, not PhD depth
+
+
+def test_the_introduction_states_the_guiding_concept_and_signposts():
+    """A review "must be defined by a guiding concept", and the reader needs
+    "adequate signposting" of how it is organised."""
+    from thesis_tools.literature_review import _INTRO_SYSTEM_PROMPT as prompt
+
+    assert "GUIDING CONCEPT" in prompt
+    assert "SIGNPOST" in prompt
+    assert "no citations" in prompt.lower()
+
+
+def test_the_conclusion_uses_the_gap_to_justify_the_students_own_work():
+    """"Signalling a gap in previous research and using this to justify your
+    own" — the gap is the warrant for the contribution, not a remark about
+    other people's work."""
+    from thesis_tools.literature_review import _CONCLUSION_SYSTEM_PROMPT as prompt
+
+    assert "JUSTIFY THE STUDENT'S OWN RESEARCH" in prompt
+    assert "warrant for their contribution" in prompt
+    assert "reiterate concisely" in prompt  # "a summary where the key arguments are reiterated"
+
+
+def test_the_executive_summary_is_left_out_of_this():
+    """The taught criteria are for the review chapter. The summaries answer a
+    different question for a different reader and must not inherit rules
+    written for a marked dissertation chapter."""
+    from thesis_tools.exec_summary import _DETAILED_SYSTEM_PROMPT, _EXEC_SYSTEM_PROMPT
+
+    for prompt in (_EXEC_SYSTEM_PROMPT, _DETAILED_SYSTEM_PROMPT):
+        assert "APPRAISE THE EVIDENCE" not in prompt
+        assert "GUIDING CONCEPT" not in prompt

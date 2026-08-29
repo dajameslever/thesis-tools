@@ -161,10 +161,17 @@ def _load_all_papers(paths: List[str]) -> List[Paper]:
 
 
 _INTRO_SYSTEM_PROMPT = (
-    "Write a short academic-style introduction (3-5 sentences) for a literature review, framing "
-    "why the student's research question matters and what the review covers. Do not invent any "
-    "facts, findings, statistics, or citations here — this paragraph only frames motivation and "
-    "scope. No citations in this paragraph.\n\n" + llm.ACADEMIC_STYLE_NOTE
+    "Write a short academic-style introduction (4-6 sentences) for a literature review.\n"
+    "It must do three things, in this order:\n"
+    "1. State the GUIDING CONCEPT — the research question or problem the review is organised "
+    "around. A literature review is defined by its guiding concept; without one stated up front it "
+    "reads as a list of material rather than an argument.\n"
+    "2. Say why that question matters and what the review covers — its scope and its limits.\n"
+    "3. SIGNPOST the organisation: state that the review works through the sub-questions in turn "
+    "and name them briefly, so a reader knows the shape of what follows before meeting it.\n"
+    "Do not invent any facts, findings, statistics, or citations — this paragraph frames the "
+    "review, it does not report on the literature. No citations in this paragraph.\n\n"
+    + llm.ACADEMIC_STYLE_NOTE
 )
 
 
@@ -237,6 +244,29 @@ def _fit_paper_texts(texts: List[str], budget: int = MAX_PROMPT_TEXT_CHARS) -> T
 # real debate rather than a one-line "sources disagree" aside — a literature
 # review is expected to critically evaluate competing evidence, not just
 # report that it exists.
+# The rules below are not stylistic preferences — they are what a taught
+# postgraduate literature review is marked on, taken from the university's own
+# dissertation bootcamp material:
+#
+#   * A review is "defined by a guiding concept ... not a descriptive list of
+#     the material available, or a set of summaries" (Craswell & Poore) —
+#     hence synthesise-by-theme, never source-by-source.
+#   * "Critically appraise strengths and weaknesses of the literature" and
+#     the critical-lens questions (How good is their evidence? How sound are
+#     their interpretations? Is there bias? What are the assumptions? Is the
+#     sample appropriate? Is the research a product of its time?) — hence the
+#     appraisal bullet. Describe -> Interpret -> Evaluate -> Synthesise is the
+#     taught sequence, and most drafts stop after Describe.
+#   * "Contradictory findings ... Do not simply note differences; you need to
+#     explain them."
+#   * "So what? - Draw out implications of your discussions."
+#   * Expected content includes "definitions and discussion of terminology"
+#     and theoretical underpinnings "in summary" at MA/MSc level.
+#   * "Assist readers to follow the aims and organization of your review by
+#     contextualizing your discussions and including adequate signposting."
+#
+# The literature review and discussion sections carry 30% of the marks each,
+# which is why this prompt is worth its length.
 _SYNTHESIS_SYSTEM_PROMPT_TEMPLATE = (
     "You write ONE SECTION of a literature review, addressing the sub-question given at the end "
     "of the message, using ONLY the material provided for each paper. A target length is given "
@@ -250,18 +280,37 @@ _SYNTHESIS_SYSTEM_PROMPT_TEMPLATE = (
     "sub-question, no sentences that only announce what the next sentence will say. If a sentence "
     "would survive being deleted, delete it. Coming in under the target because the material is "
     "thin is correct; padding to reach it is not.\n"
-    "- STRUCTURE IT. Open by framing what is at stake in this sub-question, work through the "
-    "evidence thematically, and close by stating where the weight of evidence currently sits. "
-    "Continuous academic prose — no sub-headings, no bullet points.\n"
+    "- STRUCTURE IT, AND SIGNPOST IT. Open by framing what is at stake in this sub-question and "
+    "how the evidence below is organised, work through it thematically — grouped by claim or "
+    "position, never one paper after another — and close by stating where the weight of evidence "
+    "currently sits. A reader must be able to follow the shape of the argument without having read "
+    "the papers. Continuous academic prose — no sub-headings, no bullet points.\n"
     "- SYNTHESIZE, don't summarize source-by-source. Never write a 'laundry list' where every "
     "sentence starts with an author's name (e.g. 'Smith (2020) found X. Jones (2019) found Y.'). "
     "Lead with the claim or theme and weave citations in as support, grouping sources that agree "
     "and naming those that do not.\n"
-    "- WHEN THE PAPERS DISAGREE, DEBATE IT — briefly. Give the case for, the case against, and a "
-    "short judgement on which evidence is stronger, more recent, or more directly relevant, or why "
-    "they might reasonably differ (different populations, methods, contexts). A few sentences, not "
-    "a few paragraphs. If every paper given shares the same stance, skip this and synthesize the "
-    "consistent evidence.\n"
+    "- WHEN THE PAPERS DISAGREE, EXPLAIN THE DISAGREEMENT — do not merely note that it exists. "
+    "Give the case for, the case against, and then ACCOUNT for the difference: a different "
+    "population, method, measure, setting or period will usually explain more than one side simply "
+    "being wrong. Close with a short judgement on which evidence is stronger, more recent, or more "
+    "directly relevant. A few sentences, not a few paragraphs. If every paper given shares the same "
+    "stance, skip this and synthesize the consistent evidence.\n"
+    "- APPRAISE THE EVIDENCE, DON'T JUST REPORT IT. A review is marked on critical understanding, "
+    "so a finding's weight matters as much as its content. Where the material shows it, say what a "
+    "claim rests on and how far it carries: the design and method used, the size and nature of the "
+    "sample, the setting and period, whether a conclusion outruns the evidence behind it, and "
+    "whether an assumption is doing work the data does not. Note where a study's own limitations "
+    "or a possible bias qualify what it shows, and where a finding may have dated. Name a genuine "
+    "strength as readily as a weakness — a review that only finds fault is as unbalanced as one "
+    "that finds none. Never invent a methodological detail the material does not state.\n"
+    "- SURFACE DEFINITIONS AND FRAMEWORKS. Where sources use a key term differently, or argue from "
+    "different theoretical or conceptual starting points, say so and say what turns on it — an "
+    "apparent disagreement is often two authors defining the same word differently. Keep it to a "
+    "summary of the frameworks at work, not an exposition of them.\n"
+    "- END ON THE 'SO WHAT'. Do not stop at what the literature says. Close by drawing out what it "
+    "means for the student's own research: what this sub-question can now be treated as settled "
+    "on, what it leaves open, and what that implies for how their study should be designed or "
+    "scoped. One or two sentences, following from the evidence just discussed.\n"
     "- CITE USING EXACTLY THE MARKER GIVEN. Each paper below comes with the exact in-text citation "
     "marker to use for it (already matching the student's chosen citation style) — reproduce that "
     "marker's punctuation and form exactly, right after the claim it supports. Never invent a "
@@ -522,14 +571,20 @@ def _draft_synthesis_section(
 
 
 _CONCLUSION_SYSTEM_PROMPT = (
-    "Write a closing 'Conclusion and areas for further research' section (120-200 words) for a "
+    "Write a closing 'Conclusion and areas for further research' section (150-250 words) for a "
     "literature review, given (1) sub-questions where the papers found disagree with each other, and "
-    "(2) sub-questions with no supporting literature at all. First, briefly synthesize what the "
-    "review as a whole suggests about the overall topic. Then end with a clearly labeled "
-    "'**Areas for further research:**' bullet list, one bullet per gap/tension given, each phrased as "
-    "a concrete direction for a follow-up study (e.g. what question it should ask, or what population/"
-    "method might resolve a disagreement) rather than just restating the sub-question verbatim. Frame "
-    "these as opportunities for the student's own thesis contribution. Invent nothing beyond what is "
+    "(2) sub-questions with no supporting literature at all.\n"
+    "First, reiterate concisely what the review as a whole establishes — the key arguments, not a "
+    "recap of each section. Then state where the current state of knowledge stands: what can be "
+    "treated as established, what remains contested, and what is simply unexamined.\n"
+    "Then USE THE GAP TO JUSTIFY THE STUDENT'S OWN RESEARCH. This is the point of the section: say "
+    "plainly what the literature leaves unresolved and why a study addressing it would be worth "
+    "doing — the gap is the warrant for their contribution, not merely an observation about other "
+    "people's work.\n"
+    "End with a clearly labeled '**Areas for further research:**' bullet list, one bullet per "
+    "gap/tension given, each phrased as a concrete direction for a follow-up study (what question "
+    "it should ask, or what population or method might resolve a disagreement) rather than "
+    "restating the sub-question verbatim. Invent nothing beyond what is "
     "given.\n\n" + llm.ACADEMIC_STYLE_NOTE
 )
 

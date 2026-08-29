@@ -717,6 +717,32 @@ itself and sub-questions with no coverage at all (i.e. candidate
 contributions for your thesis) — and a reference list containing only the
 papers actually cited in the draft.
 
+### What the review is written to be marked on
+
+The drafting prompts follow a taught postgraduate dissertation brief rather
+than a generic "summarise these papers" instruction. The literature review
+and discussion sections carry **30% of the marks each**, and what they are
+marked on is critical understanding, not coverage. Specifically:
+
+| Requirement | How the tool enforces it |
+|---|---|
+| A review is *"defined by a guiding concept … not a descriptive list of the material available, or a set of summaries"* | The introduction must state the guiding concept and signpost how the review is organised; sections must group by claim, never run one paper after another |
+| *"Critically appraise strengths and weaknesses"* — Describe → Interpret → **Evaluate** → Synthesise | Sections must say what a claim rests on: design, sample, setting, period, whether a conclusion outruns its evidence, whose assumption is doing the work, where a finding has dated — and name genuine strengths as readily as faults |
+| *"Contradictory findings — do not simply note differences; you need to explain them"* | Disagreements must be **accounted for** (different population, method, measure, setting, period), not just reported, before any judgement on which side is stronger |
+| Expected content includes *"definitions and discussion of terminology"* and theoretical underpinnings, **in summary** at MA/MSc level | Sections must surface where sources define a key term differently or argue from different frameworks — and keep it to a summary, not an exposition |
+| *"So what? — draw out implications of your discussions"* | Every section closes on what the evidence means for the student's own study: what is settled, what is open, what that implies for design and scope |
+| *"Signalling a gap … and using this to justify your own"* | The conclusion reiterates the key arguments, states where knowledge stands, then uses the gap as the warrant for the student's contribution |
+| *"Adequate signposting"* for reader processing | The introduction names the sub-questions in order; each section opens by framing what is at stake and how its evidence is organised |
+
+The **Excel synthesis matrix** Part 2 produces is the same "synthesis
+matrix" the structuring workshop recommends for organising ideas before
+writing — one row per paper, columns to compare across them.
+
+These rules apply to `--output-type review` only. The executive and detailed
+summaries answer a different question for a different reader, and there are
+tests asserting they do **not** inherit marking criteria written for a
+dissertation chapter.
+
 ### The other outputs: an executive summary, or a detailed one
 
 `--output-type` picks which single document a run produces — one, never
