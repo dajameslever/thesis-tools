@@ -253,6 +253,10 @@ def compute_stats(
                 continue
             papers.append(
                 {
+                    # The paper's identity, so other views (the criticality
+                    # chart) can match a paper to its themes without
+                    # re-deriving it from a title string.
+                    "key": key,
                     "title": entry.paper.title,
                     "year": entry.paper.year,
                     "doi": entry.doi or entry.paper.doi,
@@ -1640,4 +1644,5 @@ def build_literature_matrix(index: LibraryIndex, stats: dict, style: str = "apa"
         sub_questions=stats.get("sub_questions") or [],
         research_question=stats.get("research_question"),
         analysis=stats.get("_stance_analysis"),
+        themes=stats.get("themes"),
     )

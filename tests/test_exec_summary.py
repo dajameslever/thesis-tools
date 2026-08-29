@@ -489,3 +489,49 @@ def test_a_draft_that_merely_stopped_early_is_retried_on_the_same_budget(mock_as
     build_summary(**_kwargs(variant="detailed", sections=questions))
 
     assert len(budgets) == 2 and budgets[0] == budgets[1]
+
+
+def test_both_summaries_carry_the_evidence_appraisal_through():
+    """The review is now marked on critical appraisal; a summary of it that
+    reports findings without their weight loses exactly the part that was
+    hardest to write."""
+    from thesis_tools.exec_summary import _DETAILED_SYSTEM_PROMPT, _EXEC_SYSTEM_PROMPT
+
+    for prompt in (_EXEC_SYSTEM_PROMPT, _DETAILED_SYSTEM_PROMPT):
+        assert "outruns the evidence" in prompt
+
+
+def test_the_detailed_summary_appraises_how_good_the_evidence_is():
+    from thesis_tools.exec_summary import _DETAILED_SYSTEM_PROMPT as prompt
+
+    assert "**How good is the evidence:**" in prompt
+    for probe in ("design and", "sample", "setting and period", "stated limitations"):
+        assert probe in prompt, probe
+    assert "Name real strengths as readily as weaknesses" in prompt
+    assert "Never invent a methodological detail" in prompt
+
+
+def test_the_detailed_summary_explains_divergence_rather_than_recording_it():
+    from thesis_tools.exec_summary import _DETAILED_SYSTEM_PROMPT as prompt
+
+    assert "Do not merely record" in prompt
+    assert "explains more than one side being wrong" in prompt
+
+
+def test_the_executive_tag_is_a_judgement_about_weight_not_a_vote_count():
+    """[Evidence] should mean the finding will bear weight, not that several
+    papers happened to mention it."""
+    from thesis_tools.exec_summary import _EXEC_SYSTEM_PROMPT as prompt
+
+    assert "how much weight a finding will bear" in prompt
+    assert "rather than how many papers happen to mention it" in prompt
+
+
+def test_the_summaries_still_do_not_inherit_the_review_chapter_criteria():
+    """Appraisal is shared; the marking criteria for a dissertation chapter
+    are not."""
+    from thesis_tools.exec_summary import _DETAILED_SYSTEM_PROMPT, _EXEC_SYSTEM_PROMPT
+
+    for prompt in (_EXEC_SYSTEM_PROMPT, _DETAILED_SYSTEM_PROMPT):
+        assert "GUIDING CONCEPT" not in prompt
+        assert "SIGNPOST" not in prompt

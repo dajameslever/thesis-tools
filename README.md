@@ -734,14 +734,41 @@ marked on is critical understanding, not coverage. Specifically:
 | *"Signalling a gap … and using this to justify your own"* | The conclusion reiterates the key arguments, states where knowledge stands, then uses the gap as the warrant for the student's contribution |
 | *"Adequate signposting"* for reader processing | The introduction names the sub-questions in order; each section opens by framing what is at stake and how its evidence is organised |
 
-The **Excel synthesis matrix** Part 2 produces is the same "synthesis
-matrix" the structuring workshop recommends for organising ideas before
-writing — one row per paper, columns to compare across them.
+The **Excel workbook** Part 2 produces carries the three working documents
+the same material recommends keeping while you review:
 
-These rules apply to `--output-type review` only. The executive and detailed
+1. **Literature Review Matrix** — the synthesis matrix itself: one row per
+   paper, columns to compare across them.
+2. **Criticality** — the critical-question chart, verbatim: thirteen
+   questions down the side, one column per paper (the fifteen most relevant,
+   because eighty columns is not a working document). Four rows are filled
+   in because the toolkit can answer them honestly — relevance to your
+   question, how old the work is, the themes it contributes to, and **who
+   agrees or disagrees with it**, naming the other papers on each side.
+   That last one is the question the tool answers better than memory can: it
+   has already classified every paper against every sub-question. The other
+   nine are blank on purpose. A blank cell is the question being put to you,
+   which is the whole point of the exercise — pre-filling "is there bias?"
+   with a guess would replace judgement with the appearance of it.
+3. **Reading log** — title, author/date, and a starting summary are filled
+   in, plus how each paper relates to what others say. *Text (exact)*,
+   *What it means to me* and *Argument link* are headed "(yours to write)"
+   and left empty. A log with the reflection already written is not a
+   reading log.
+
+The marking criteria above apply to `--output-type review` only — the
 summaries answer a different question for a different reader, and there are
-tests asserting they do **not** inherit marking criteria written for a
-dissertation chapter.
+tests asserting they do not inherit criteria written for a dissertation
+chapter. **Critical appraisal is the one thing they do share**, because a
+summary that reports findings without their weight throws away the part of
+the review that was hardest to write. The detailed summary gains a **How
+good is the evidence** paragraph per sub-question (design, sample, setting,
+period, where a conclusion outruns what is behind it, where a study's own
+limitations qualify it) and must explain divergence rather than record it.
+In the executive summary the `[Evidence]` / `[Contested]` / `[Gap]` tag is
+now explicitly a judgement about how much weight a finding will bear, not a
+count of how many papers mention it — a single well-designed study can
+outweigh three that assume what they set out to show.
 
 ### The other outputs: an executive summary, or a detailed one
 
