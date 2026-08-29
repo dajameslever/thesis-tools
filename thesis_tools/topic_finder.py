@@ -7,7 +7,7 @@ import re
 import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from . import llm
 from .citations import STYLES
@@ -16,6 +16,7 @@ from .library.library_indexer import index_known_papers
 from .outputs import write_output
 from .paper_download import download_papers
 from .relevance import keywords_from_text, score_relevance, title_similarity
+from .search_log import append_searches
 from .report import ScoredPaper, build_report
 from .sources import ALL_SOURCES
 from .sources.base import Paper
@@ -45,6 +46,11 @@ class TopicFinderInputs:
     extraction_llm_model: str = llm.DEFAULT_EXTRACTION_MODEL
     contact_email: Optional[str] = None
     output_path: Optional[str] = None
+    # The append-only record of every search run — date, term, source,
+    # result count. Accumulates across runs, so it is never versioned or
+    # replaced; see thesis_tools/search_log.py.
+    write_search_log: bool = True
+    search_log_path: Optional[str] = None
     sub_questions: Optional[List[str]] = None
     auto_subquestions: bool = True
     # Path to a previous run's <report>.papers.json cache. When set, skips the
@@ -149,6 +155,7 @@ def run_topic_finder(inputs: TopicFinderInputs) -> str:
     keywords = keywords_from_text(query_text)
 
     if inputs.reanalyze_from:
+        searched: List[Tuple[str, str, int]] = []  # nothing was searched on this path
         deduped, sources_to_use = _load_cache(Path(inputs.reanalyze_from))
         print(f"Reanalyzing {len(deduped)} cached paper(s) — no new search, sub-questions/style can change freely.", file=sys.stderr)
     else:
@@ -161,6 +168,9 @@ def run_topic_finder(inputs: TopicFinderInputs) -> str:
         print(f"Searching {len(sources_to_use)} source(s) for: {search_query!r}", file=sys.stderr)
 
         all_papers = []
+        # One row per source queried, for the append-only search log written
+        # once the report path is known — see thesis_tools/search_log.py.
+        searched: List[Tuple[str, str, int]] = []
         for source_name in sources_to_use:
             client_cls = ALL_SOURCES[source_name]
             if source_name in ("openalex", "crossref"):
@@ -170,6 +180,7 @@ def run_topic_finder(inputs: TopicFinderInputs) -> str:
             print(f"  querying {source_name}...", file=sys.stderr)
             found = client.search(search_query, limit=inputs.limit_per_source)
             print(f"    -> {len(found)} result(s)", file=sys.stderr)
+            searched.append((search_query, source_name, len(found)))
             all_papers.extend(found)
 
         deduped = dedupe_papers(all_papers)
@@ -248,6 +259,11 @@ def run_topic_finder(inputs: TopicFinderInputs) -> str:
 
     output_path = Path(inputs.output_path) if inputs.output_path else _default_output_path(inputs.working_title)
     write_output(output_path, report_text)
+
+    # Written after the report so each row can name the run it belongs to.
+    # A reanalyze run searched nothing and correctly logs nothing.
+    if inputs.write_search_log:
+        append_searches(searched, inputs.search_log_path, report_path=str(output_path))
 
     cache_path = cache_path_for(output_path)
     _save_cache(

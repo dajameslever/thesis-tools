@@ -19,6 +19,7 @@ from .library.visualize import build_literature_matrix, compute_stats, render_ht
 from .literature_review import OUTPUT_TYPES, LiteratureReviewInputs, run_literature_review
 from .outputs import archive_if_kept, write_view
 from .project import DEFAULT_PROJECT_PATH, ProjectState
+from .search_log import DEFAULT_SEARCH_LOG_PATH, terms_already_searched
 from .sources import ALL_SOURCES
 from .subquestions import generate_subquestions
 from .topic_finder import TopicFinderInputs, cache_path_for, load_cache_metadata, run_topic_finder
@@ -391,6 +392,21 @@ def _build_parser() -> argparse.ArgumentParser:
     tf.add_argument("--contact-email", help="Optional email sent to OpenAlex/Crossref's 'polite pool' for faster, more reliable responses")
     tf.add_argument("-o", "--output", dest="output_path", help="Where to write the Markdown report (default: output/<slug>-<timestamp>.md)")
     tf.add_argument(
+        "--search-log",
+        dest="search_log_path",
+        default=None,
+        help=f"Where to keep the running search log (default: {DEFAULT_SEARCH_LOG_PATH}). One row "
+        "per source queried — date, term, source, result count — appended, never replaced, so it "
+        "builds a record of what has already been tried",
+    )
+    tf.add_argument(
+        "--no-search-log",
+        dest="write_search_log",
+        action="store_false",
+        help="Don't record this run in the search log",
+    )
+    tf.set_defaults(write_search_log=True)
+    tf.add_argument(
         "--reanalyze",
         dest="reanalyze_from",
         help="Path to a previous run's <report>.papers.json — skip searching and re-score/re-analyze "
@@ -656,6 +672,18 @@ def _run_topic_finder_command(args: argparse.Namespace) -> int:
         inputs.download_papers = inputs.download_papers or args.download_papers
         inputs.download_dir = args.download_dir
         inputs.library_index_path = library_index_path
+
+    inputs.write_search_log = args.write_search_log
+    inputs.search_log_path = args.search_log_path
+
+    # Half the value of a search log is knowing what has already been run,
+    # so it is shown before the search rather than only written after it.
+    if inputs.write_search_log and not inputs.reanalyze_from:
+        tried = terms_already_searched(inputs.search_log_path)
+        if tried:
+            shown = "; ".join(f'"{t}"' for t in tried[:5])
+            more = f" (+{len(tried) - 5} more in the log)" if len(tried) > 5 else ""
+            print(f"Previously searched: {shown}{more}", file=sys.stderr)
 
     try:
         report_path = run_topic_finder(inputs)

@@ -1,3 +1,4 @@
+import json
 from unittest.mock import patch
 
 from thesis_tools.sources.base import Paper
@@ -409,3 +410,64 @@ def test_run_topic_finder_summarizes_with_extraction_model_not_llm_model(
     mock_summarize.assert_called_once()
     _, kwargs = mock_summarize.call_args
     assert kwargs["model"] == "claude-haiku-4-5"
+
+
+def test_every_source_queried_is_recorded_in_the_search_log(tmp_path, monkeypatch):
+    """One row per source, so the log shows where a term was tried, not just
+    that it was."""
+    monkeypatch.chdir(tmp_path)
+    from thesis_tools.search_log import read_log
+
+    log_path = tmp_path / "search-log.csv"
+    inputs = TopicFinderInputs(
+        field="tourism", working_title="AI in travel planning",
+        research_question="How does AI affect travel planning?",
+        sources=["semanticscholar", "arxiv"], use_llm_summaries=False,
+        output_path=str(tmp_path / "report.md"), search_log_path=str(log_path),
+    )
+    with patch("thesis_tools.sources.semantic_scholar.SemanticScholarClient.search",
+               return_value=[Paper(title="AI travel planning study", year=2024, doi="10.1/a")]), \
+         patch("thesis_tools.sources.arxiv.ArxivClient.search", return_value=[]):
+        run_topic_finder(inputs)
+
+    rows = read_log(str(log_path))
+    assert [r["Location searched"] for r in rows] == ["semanticscholar", "arxiv"]
+    assert [r["Results"] for r in rows] == ["1", "0"]
+    assert all(r["Run output"] == str(tmp_path / "report.md") for r in rows)
+    assert all(r["Search term"] for r in rows)
+
+
+def test_a_reanalyze_run_logs_nothing_because_it_searched_nothing(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    from thesis_tools.search_log import read_log
+
+    log_path = tmp_path / "search-log.csv"
+    cache = tmp_path / "prior.papers.json"
+    cache.write_text(json.dumps({
+        "sources_used": ["semanticscholar"],
+        "papers": [Paper(title="A cached paper", year=2024, doi="10.1/a").__dict__],
+    }), encoding="utf-8")
+
+    run_topic_finder(TopicFinderInputs(
+        field="tourism", working_title="AI in travel planning",
+        research_question="How does AI affect travel planning?",
+        use_llm_summaries=False, reanalyze_from=str(cache),
+        output_path=str(tmp_path / "report.md"), search_log_path=str(log_path),
+    ))
+
+    assert read_log(str(log_path)) == []
+
+
+def test_the_search_log_can_be_turned_off(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    log_path = tmp_path / "search-log.csv"
+    with patch("thesis_tools.sources.semantic_scholar.SemanticScholarClient.search",
+               return_value=[Paper(title="AI travel planning study", year=2024, doi="10.1/a")]):
+        run_topic_finder(TopicFinderInputs(
+            field="tourism", working_title="AI in travel planning",
+            research_question="How does AI affect travel planning?",
+            sources=["semanticscholar"], use_llm_summaries=False,
+            output_path=str(tmp_path / "report.md"), search_log_path=str(log_path),
+            write_search_log=False,
+        ))
+    assert not log_path.exists()

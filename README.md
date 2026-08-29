@@ -756,6 +756,34 @@ the same material recommends keeping while you review:
    and left empty. A log with the reflection already written is not a
    reading log.
 
+The third document, the **search log**, comes from Part 1 instead, because
+that is where the searching happens. Every `topic-finder` run appends one
+row per source queried to `output/search-log.csv`:
+
+```
+Date,Search term,Location searched,Results,Run output
+2026-08-29 23:09,travel planning,semanticscholar,8,output/ai-in-travel-planning-….md
+2026-08-29 23:09,travel planning,arxiv,0,output/ai-in-travel-planning-….md
+```
+
+It is the one output that is **appended, never replaced** — a search log
+that gets overwritten each run is not a log, since the whole point is the
+rows that came before. (It needs none of the versioning described below:
+appending cannot destroy what is already there.) Zero-result searches are
+recorded too, because "that term returns nothing" is exactly what a log
+exists to stop you rediscovering. Each row names the report it produced, so
+a row can be followed back to the papers it found, and a `--reanalyze` run
+correctly logs nothing because it searched nothing.
+
+Half the value is knowing what has already been tried, so a run prints it
+before searching:
+
+```
+Previously searched: "travel planning"; "agentic booking systems"
+```
+
+`--search-log` moves the file, `--no-search-log` skips recording a run.
+
 The marking criteria above apply to `--output-type review` only — the
 summaries answer a different question for a different reader, and there are
 tests asserting they do not inherit criteria written for a dissertation
@@ -986,6 +1014,7 @@ thesis_tools/
                       unchanged paper/question set is never reclassified (used by visualize-library)
   outputs.py          Documents are kept wherever written; library views are overwritten in
                       place unless they land in output/, where the destination's rule wins
+  search_log.py       The append-only record of every search run — date, term, source, results
   review_html.py      Renders Part 3's draft as a self-contained HTML page
   citations.py        APA / MLA / Chicago / Harvard / IEEE reference-list formatting, plus
                       in_text_citation() for the parenthetical/numbered marker used inline
