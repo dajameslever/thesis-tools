@@ -626,11 +626,40 @@ and a source that took thirty pages may take a clause. Every sentence has to
 carry a finding or a link between findings; coming in under the target
 because the material is thin is correct, padding to reach it is not.
 
-Direct quotation is **off by default** for the same reason (a real submitted
-dissertation this was calibrated against quotes 27 words in ~2,900 — under
-1%). Pass `--allow-quotes` to permit a sparing quotation where exact wording
-genuinely carries something a paraphrase cannot; the verbatim-only rules
-still apply then, so a quotation is never invented.
+Direct quotation is **off by default** for the same reason. That default was
+first calibrated against a single submitted dissertation, which quoted 27
+words in ~2,900 — under 1%. One sample is not a standard, so it has since
+been checked against a published exemplar: an Oxford FHS Geography
+dissertation (2020, 11,955 words), whose literature review chapter measures:
+
+| | Oxford exemplar | earlier sample |
+|---|---|---|
+| Literature review length | 2,879 words (24% of the dissertation) | ~2,900 words |
+| Quoted words | 104 — **3.6%** | 27 — 0.9% |
+| Longest quotation | 9 words | — |
+| Block quotations | none | none |
+| Citation density | ~95 citations, one per 30 words | — |
+| Sub-section lengths | 1,570 / 404 / 905 words | — |
+
+So a good review does quote — about four times more than the first sample —
+but the shape matters more than the share. **Every quotation is a short
+phrase embedded in the writer's own sentence**, carrying a coined term or a
+conceptual formulation back to whoever coined it (`urban citizenship as a
+'performative act' (Lepofsky and Fraser, 2003: 127)`), and several are
+adapted with `[…]` to fit the surrounding syntax. Not one is a passage
+reproduced because summarising it was harder.
+
+The default stays paraphrase-only, because that is the failure mode worth
+guarding against: quoting to avoid the work of compression. `--allow-quotes`
+is closer to exemplar practice, and is the right flag if you want it — the
+verbatim-only rules still apply, so a quotation is never invented.
+
+Two other things that exemplar confirms, both already how the tool behaves:
+its three sub-sections run 1,570 / 404 / 905 words, **scaled to the evidence
+behind each rather than divided evenly** — which is what `target_words_for`
+does — and its claims lead with the point and group their sources
+(`(e.g. Goodwin, 2014; Marston and Mitchell, 2004)`) rather than marching
+through one paper at a time.
 
 **You get both a Markdown file and an HTML page.** The `.md` is the one to
 edit; the `.html` beside it is the one to read — a sticky contents list, a
