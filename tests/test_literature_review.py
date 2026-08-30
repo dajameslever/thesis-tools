@@ -1492,3 +1492,17 @@ def test_paraphrase_rules_are_absent_when_quoting_is_allowed_and_vice_versa():
 
     assert "QUOTE ACCURATELY" not in _synthesis_system_prompt()
     assert "SWAPPING WORDS IS NOT PARAPHRASING" not in _synthesis_system_prompt(allow_quotes=True)
+
+
+def test_quotations_are_bounded_by_length_and_rate_not_a_flat_count():
+    """Two published exemplars agree on the shape rather than the share:
+    both quote at a median of five words with none over nine, but one quotes
+    1.7% of its chapter and the other 3.5%. Length is the stable constraint;
+    a flat "one or two per section" was calibrated on neither."""
+    from thesis_tools.literature_review import _synthesis_system_prompt
+
+    prompt = _synthesis_system_prompt(allow_quotes=True)
+    assert "KEEP EACH ONE TO A PHRASE" in prompt
+    assert "About five words is typical and ten is the outside limit" in prompt
+    assert "never a block quotation" in prompt
+    assert "one quotation per two or three hundred words" in prompt

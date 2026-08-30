@@ -632,22 +632,34 @@ words in ~2,900 — under 1%. One sample is not a standard, so it has since
 been checked against a published exemplar: an Oxford FHS Geography
 dissertation (2020, 11,955 words), whose literature review chapter measures:
 
-| | Oxford exemplar | earlier sample |
-|---|---|---|
-| Literature review length | 2,879 words (24% of the dissertation) | ~2,900 words |
-| Quoted words | 104 — **3.6%** | 27 — 0.9% |
-| Longest quotation | 9 words | — |
-| Block quotations | none | none |
-| Citation density | ~95 citations, one per 30 words | — |
-| Sub-section lengths | 1,570 / 404 / 905 words | — |
+| | Oxford, FHS Geography | Leeds, BA International Relations | earlier sample |
+|---|---|---|---|
+| Literature review length | 2,987 words | 3,257 words | ~2,900 words |
+| Share of the dissertation | 25% | 30% | — |
+| Quoted words | **3.5%** | **1.7%** | 0.9% |
+| Median quotation | 5 words | 5 words | — |
+| Longest quotation | 9 words | 9 words | — |
+| Block quotations | none | none | none |
+| Citation density | one per 25 words | one per 57 words | — |
 
-So a good review does quote — about four times more than the first sample —
-but the shape matters more than the share. **Every quotation is a short
-phrase embedded in the writer's own sentence**, carrying a coined term or a
-conceptual formulation back to whoever coined it (`urban citizenship as a
-'performative act' (Lepofsky and Fraser, 2003: 127)`), and several are
-adapted with `[…]` to fit the surrounding syntax. Not one is a passage
-reproduced because summarising it was harder.
+**The share varies fourfold; the shape does not.** How much a good review
+quotes turns out to be a poor thing to copy — 0.9%, 1.7% and 3.5% across
+three dissertations, with the two published exemplars differing by a factor
+of two between themselves. What all three agree on is the *size* of a
+quotation: a median of five words, none longer than nine, not one block
+quotation between them. Every quotation is a fragment carrying a term or a
+formulation, set inside a sentence of the writer's own (`urban citizenship
+as a 'performative act' (Lepofsky and Fraser, 2003: 127)`; `citizenship as
+'what we owe, as much as what we expect'`), several adapted with `[…]` to
+fit the surrounding syntax. None is a passage reproduced because summarising
+it would have been harder.
+
+So the rule the tool enforces is a length and a rate, not a count: about
+five words, ten at the outside, roughly one per two or three hundred words
+of section — which means a short section may well have none. An earlier
+version capped it at "one or two in the whole section", which the exemplars
+show is simply wrong: they quote ten and nineteen times across a chapter.
+They just never quote at length.
 
 The default stays paraphrase-only, because that is the failure mode worth
 guarding against: quoting to avoid the work of compression. `--allow-quotes`
@@ -683,12 +695,14 @@ forbidding them (as the rules previously did, by demanding
 character-for-character reproduction) pushes the model toward dropping in
 whole sentences instead. Neither may change what the author meant.
 
-Two other things that exemplar confirms, both already how the tool behaves:
-its three sub-sections run 1,570 / 404 / 905 words, **scaled to the evidence
-behind each rather than divided evenly** — which is what `target_words_for`
-does — and its claims lead with the point and group their sources
-(`(e.g. Goodwin, 2014; Marston and Mitchell, 2004)`) rather than marching
-through one paper at a time.
+Two other things the exemplars confirm, both already how the tool behaves:
+the Oxford sub-sections run 1,570 / 404 / 905 words, **scaled to the
+evidence behind each rather than divided evenly** — which is what
+`target_words_for` does — and claims lead with the point and group their
+sources (`(e.g. Goodwin, 2014; Marston and Mitchell, 2004)`) rather than
+marching through one paper at a time. Both chapters also run to a quarter or
+more of the whole dissertation, which matches the marking weight the
+bootcamp material gives them.
 
 **You get both a Markdown file and an HTML page.** The `.md` is the one to
 edit; the `.html` beside it is the one to read — a sticky contents list, a
