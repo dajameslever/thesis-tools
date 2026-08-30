@@ -84,3 +84,23 @@ def test_a_failed_write_does_not_lose_the_run(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr("thesis_tools.search_log.Path.mkdir", _boom)
     assert append_searches(_ROWS, str(path)) is None
     assert "couldn't write" in capsys.readouterr().err
+
+
+def test_the_default_log_path_is_isolated_during_tests(tmp_path):
+    """A test that runs topic-finder without chdir-ing first would otherwise
+    append to the repo's own output/search-log.csv — and did, for 396 rows,
+    before conftest.py started redirecting the default."""
+    from thesis_tools import search_log
+
+    assert "/tmp" in search_log.DEFAULT_SEARCH_LOG_PATH or "pytest" in search_log.DEFAULT_SEARCH_LOG_PATH
+    assert search_log.DEFAULT_SEARCH_LOG_PATH != "output/search-log.csv"
+
+
+def test_writing_with_no_path_given_lands_on_the_isolated_default():
+    from pathlib import Path
+
+    from thesis_tools import search_log
+
+    written = append_searches([("a term", "crossref", 1)])
+    assert written == Path(search_log.DEFAULT_SEARCH_LOG_PATH)
+    assert not Path("output/search-log.csv").exists()

@@ -4,8 +4,12 @@ __pycache__/
 venv/
 *.egg-info/
 .pytest_cache/
-output/*.md
-output/*.papers.json
+# Everything the tool writes into output/ is generated — drafts, summaries,
+# their HTML, the search log. Listing extensions one at a time meant each new
+# output type silently became committable: the search log was added and 396
+# rows of it landed in two commits before anyone noticed. Ignore the folder's
+# contents and keep the folder.
+output/*
 !output/.gitkeep
 /library/
 /processed/
