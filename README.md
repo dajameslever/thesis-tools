@@ -642,6 +642,18 @@ dissertation (2020, 11,955 words), whose literature review chapter measures:
 | Block quotations | none | none | none |
 | Citation density | one per 25 words | one per 57 words | — |
 
+Every one of those numbers came out of `scripts/measure_exemplar.py`, so
+none of this has to be taken on trust — run it on an exemplar of your own
+and the defaults can be argued with using evidence rather than taste. It
+takes a PDF (`--pages 11-19`, or `--find "Literature Review"`), a text file,
+or the chapter pasted straight onto stdin, which is how most exemplars
+actually arrive:
+
+```bash
+python scripts/measure_exemplar.py thesis.pdf --find "Literature Review" --total-words 11955
+pbpaste | python scripts/measure_exemplar.py --total-words 11955
+```
+
 **The share varies fourfold; the shape does not.** How much a good review
 quotes turns out to be a poor thing to copy — 0.9%, 1.7% and 3.5% across
 three dissertations, with the two published exemplars differing by a factor
