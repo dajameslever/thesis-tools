@@ -890,7 +890,7 @@ def test_allow_quotes_restores_the_verbatim_quoting_rules(mock_ask, mock_get_cli
 
     calls = _calls_matching(mock_ask, _SYNTHESIS_MARKER)
     system_prompt, user_message = calls[0].args[1], calls[0].args[2]
-    assert "QUOTE VERBATIM" in system_prompt
+    assert "QUOTE ACCURATELY" in system_prompt
     assert "PARAPHRASE THROUGHOUT" not in system_prompt
     assert "Abstract (verbatim)" in user_message
 
@@ -1430,3 +1430,65 @@ def test_the_executive_summary_is_left_out_of_this():
     for prompt in (_EXEC_SYSTEM_PROMPT, _DETAILED_SYSTEM_PROMPT):
         assert "APPRAISE THE EVIDENCE" not in prompt
         assert "GUIDING CONCEPT" not in prompt
+
+
+def test_paraphrase_means_restructuring_not_swapping_synonyms():
+    """The taught guidance's worked example of a failed paraphrase keeps the
+    source's sentence intact and substitutes synonyms into it — which is also
+    what a language model does by default when told to use its own words."""
+    from thesis_tools.literature_review import _synthesis_system_prompt
+
+    prompt = _synthesis_system_prompt()
+    assert "SWAPPING WORDS IS NOT PARAPHRASING" in prompt
+    assert "Change the STRUCTURE, not just the vocabulary" in prompt
+    assert "a different order" in prompt
+    assert "could be found in the source unchanged, rewrite it" in prompt
+
+
+def test_a_paraphrase_is_attributed_as_firmly_as_a_quotation():
+    """"Make it clear where a paraphrase begins and ends, and which parts of
+    the material are not your own ideas.\""""
+    from thesis_tools.literature_review import _synthesis_system_prompt
+
+    prompt = _synthesis_system_prompt()
+    assert "MAKE THE BOUNDARY VISIBLE" in prompt
+    assert "a paraphrase needs its reference exactly as much as a quotation does" in prompt
+
+
+def test_paraphrasing_may_not_shift_the_meaning():
+    from thesis_tools.literature_review import _synthesis_system_prompt
+
+    prompt = _synthesis_system_prompt()
+    assert "KEEP THE MEANING" in prompt
+    assert "A hedge in the original stays a hedge" in prompt
+
+
+def test_a_quotation_must_have_one_of_the_four_named_reasons():
+    """"When you do quote, the important thing to consider is why you are
+    using a quote" — authorial voice, definition, clarity of position, or
+    opening/closing a passage."""
+    from thesis_tools.literature_review import _synthesis_system_prompt
+
+    prompt = _synthesis_system_prompt(allow_quotes=True)
+    for reason in ("AUTHORIAL VOICE", "DEFINITION", "POSITION", "opening or closing"):
+        assert reason in prompt, reason
+    assert "'It saves me summarising it' is not one of them" in prompt
+
+
+def test_quotations_may_be_fitted_with_ellipses_and_brackets():
+    """The two accepted devices for integrating a quotation — and the Oxford
+    exemplar uses both. Forbidding them would push the model toward dropping
+    in whole sentences instead."""
+    from thesis_tools.literature_review import _synthesis_system_prompt
+
+    prompt = _synthesis_system_prompt(allow_quotes=True)
+    assert "ellipsis" in prompt and "square brackets" in prompt
+    assert "Neither may change what the author meant" in prompt
+    assert "never a passage dropped in whole" in prompt
+
+
+def test_paraphrase_rules_are_absent_when_quoting_is_allowed_and_vice_versa():
+    from thesis_tools.literature_review import _synthesis_system_prompt
+
+    assert "QUOTE ACCURATELY" not in _synthesis_system_prompt()
+    assert "SWAPPING WORDS IS NOT PARAPHRASING" not in _synthesis_system_prompt(allow_quotes=True)

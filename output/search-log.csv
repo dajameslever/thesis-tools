@@ -219,3 +219,135 @@ Date,Search term,Location searched,Results,Run output
 2026-08-29 23:51,some title,openalex,0,/tmp/pytest-of-root/pytest-273/test_run_topic_finder_summariz0/report.md
 2026-08-29 23:51,some title,crossref,0,/tmp/pytest-of-root/pytest-273/test_run_topic_finder_summariz0/report.md
 2026-08-29 23:51,some title,arxiv,0,/tmp/pytest-of-root/pytest-273/test_run_topic_finder_summariz0/report.md
+2026-08-30 08:35,sleep deprivation adolescent decision-making impair adolescents,semanticscholar,1,/tmp/pytest-of-root/pytest-274/test_run_topic_finder_end_to_e0/report.md
+2026-08-30 08:35,sleep deprivation adolescent decision-making impair adolescents,openalex,0,/tmp/pytest-of-root/pytest-274/test_run_topic_finder_end_to_e0/report.md
+2026-08-30 08:35,sleep deprivation adolescent decision-making impair adolescents,crossref,0,/tmp/pytest-of-root/pytest-274/test_run_topic_finder_end_to_e0/report.md
+2026-08-30 08:35,sleep deprivation adolescent decision-making impair adolescents,arxiv,0,/tmp/pytest-of-root/pytest-274/test_run_topic_finder_end_to_e0/report.md
+2026-08-30 08:35,totally novel basket weaving technique rural patagonia,semanticscholar,0,/tmp/pytest-of-root/pytest-274/test_run_topic_finder_no_hits0/report.md
+2026-08-30 08:35,totally novel basket weaving technique rural patagonia,openalex,0,/tmp/pytest-of-root/pytest-274/test_run_topic_finder_no_hits0/report.md
+2026-08-30 08:35,totally novel basket weaving technique rural patagonia,crossref,0,/tmp/pytest-of-root/pytest-274/test_run_topic_finder_no_hits0/report.md
+2026-08-30 08:35,totally novel basket weaving technique rural patagonia,arxiv,0,/tmp/pytest-of-root/pytest-274/test_run_topic_finder_no_hits0/report.md
+2026-08-30 08:35,sleep decision-making,semanticscholar,1,/tmp/pytest-of-root/pytest-274/test_run_topic_finder_writes_r0/report.md
+2026-08-30 08:35,sleep decision-making,openalex,0,/tmp/pytest-of-root/pytest-274/test_run_topic_finder_writes_r0/report.md
+2026-08-30 08:35,sleep decision-making,crossref,0,/tmp/pytest-of-root/pytest-274/test_run_topic_finder_writes_r0/report.md
+2026-08-30 08:35,sleep decision-making,arxiv,0,/tmp/pytest-of-root/pytest-274/test_run_topic_finder_writes_r0/report.md
+2026-08-30 08:35,sleep memory,semanticscholar,5,/tmp/pytest-of-root/pytest-274/test_run_topic_finder_prints_o0/report.md
+2026-08-30 08:35,sleep memory,openalex,0,/tmp/pytest-of-root/pytest-274/test_run_topic_finder_prints_o0/report.md
+2026-08-30 08:35,sleep memory,crossref,0,/tmp/pytest-of-root/pytest-274/test_run_topic_finder_prints_o0/report.md
+2026-08-30 08:35,sleep memory,arxiv,0,/tmp/pytest-of-root/pytest-274/test_run_topic_finder_prints_o0/report.md
+2026-08-30 08:35,some working title,semanticscholar,0,/tmp/pytest-of-root/pytest-274/test_run_topic_finder_announce0/report.md
+2026-08-30 08:35,some working title,openalex,0,/tmp/pytest-of-root/pytest-274/test_run_topic_finder_announce0/report.md
+2026-08-30 08:35,some working title,crossref,0,/tmp/pytest-of-root/pytest-274/test_run_topic_finder_announce0/report.md
+2026-08-30 08:35,some working title,arxiv,0,/tmp/pytest-of-root/pytest-274/test_run_topic_finder_announce0/report.md
+2026-08-30 08:35,some working title,semanticscholar,0,/tmp/pytest-of-root/pytest-274/test_run_topic_finder_reports_0/report.md
+2026-08-30 08:35,some working title,openalex,0,/tmp/pytest-of-root/pytest-274/test_run_topic_finder_reports_0/report.md
+2026-08-30 08:35,some working title,crossref,0,/tmp/pytest-of-root/pytest-274/test_run_topic_finder_reports_0/report.md
+2026-08-30 08:35,some working title,arxiv,0,/tmp/pytest-of-root/pytest-274/test_run_topic_finder_reports_0/report.md
+2026-08-30 08:35,sleep decision-making,semanticscholar,1,/tmp/pytest-of-root/pytest-274/test_run_topic_finder_download0/report.md
+2026-08-30 08:35,sleep decision-making,openalex,0,/tmp/pytest-of-root/pytest-274/test_run_topic_finder_download0/report.md
+2026-08-30 08:35,sleep decision-making,crossref,0,/tmp/pytest-of-root/pytest-274/test_run_topic_finder_download0/report.md
+2026-08-30 08:35,sleep decision-making,arxiv,0,/tmp/pytest-of-root/pytest-274/test_run_topic_finder_download0/report.md
+2026-08-30 08:35,sleep decision-making,semanticscholar,1,/tmp/pytest-of-root/pytest-274/test_run_topic_finder_skips_do0/report.md
+2026-08-30 08:35,sleep decision-making,openalex,0,/tmp/pytest-of-root/pytest-274/test_run_topic_finder_skips_do0/report.md
+2026-08-30 08:35,sleep decision-making,crossref,0,/tmp/pytest-of-root/pytest-274/test_run_topic_finder_skips_do0/report.md
+2026-08-30 08:35,sleep decision-making,arxiv,0,/tmp/pytest-of-root/pytest-274/test_run_topic_finder_skips_do0/report.md
+2026-08-30 08:35,sleep decision-making,semanticscholar,1,/tmp/pytest-of-root/pytest-274/test_run_topic_finder_indexes_0/report.md
+2026-08-30 08:35,sleep decision-making,openalex,0,/tmp/pytest-of-root/pytest-274/test_run_topic_finder_indexes_0/report.md
+2026-08-30 08:35,sleep decision-making,crossref,0,/tmp/pytest-of-root/pytest-274/test_run_topic_finder_indexes_0/report.md
+2026-08-30 08:35,sleep decision-making,arxiv,0,/tmp/pytest-of-root/pytest-274/test_run_topic_finder_indexes_0/report.md
+2026-08-30 08:35,some paper,semanticscholar,1,/tmp/pytest-of-root/pytest-274/test_run_topic_finder_skips_li0/report.md
+2026-08-30 08:35,some paper,openalex,0,/tmp/pytest-of-root/pytest-274/test_run_topic_finder_skips_li0/report.md
+2026-08-30 08:35,some paper,crossref,0,/tmp/pytest-of-root/pytest-274/test_run_topic_finder_skips_li0/report.md
+2026-08-30 08:35,some paper,arxiv,0,/tmp/pytest-of-root/pytest-274/test_run_topic_finder_skips_li0/report.md
+2026-08-30 08:35,some title,semanticscholar,1,/tmp/pytest-of-root/pytest-274/test_run_topic_finder_summariz0/report.md
+2026-08-30 08:35,some title,openalex,0,/tmp/pytest-of-root/pytest-274/test_run_topic_finder_summariz0/report.md
+2026-08-30 08:35,some title,crossref,0,/tmp/pytest-of-root/pytest-274/test_run_topic_finder_summariz0/report.md
+2026-08-30 08:35,some title,arxiv,0,/tmp/pytest-of-root/pytest-274/test_run_topic_finder_summariz0/report.md
+2026-08-30 08:36,sleep deprivation adolescent decision-making impair adolescents,semanticscholar,1,/tmp/pytest-of-root/pytest-275/test_run_topic_finder_end_to_e0/report.md
+2026-08-30 08:36,sleep deprivation adolescent decision-making impair adolescents,openalex,0,/tmp/pytest-of-root/pytest-275/test_run_topic_finder_end_to_e0/report.md
+2026-08-30 08:36,sleep deprivation adolescent decision-making impair adolescents,crossref,0,/tmp/pytest-of-root/pytest-275/test_run_topic_finder_end_to_e0/report.md
+2026-08-30 08:36,sleep deprivation adolescent decision-making impair adolescents,arxiv,0,/tmp/pytest-of-root/pytest-275/test_run_topic_finder_end_to_e0/report.md
+2026-08-30 08:36,totally novel basket weaving technique rural patagonia,semanticscholar,0,/tmp/pytest-of-root/pytest-275/test_run_topic_finder_no_hits0/report.md
+2026-08-30 08:36,totally novel basket weaving technique rural patagonia,openalex,0,/tmp/pytest-of-root/pytest-275/test_run_topic_finder_no_hits0/report.md
+2026-08-30 08:36,totally novel basket weaving technique rural patagonia,crossref,0,/tmp/pytest-of-root/pytest-275/test_run_topic_finder_no_hits0/report.md
+2026-08-30 08:36,totally novel basket weaving technique rural patagonia,arxiv,0,/tmp/pytest-of-root/pytest-275/test_run_topic_finder_no_hits0/report.md
+2026-08-30 08:36,sleep decision-making,semanticscholar,1,/tmp/pytest-of-root/pytest-275/test_run_topic_finder_writes_r0/report.md
+2026-08-30 08:36,sleep decision-making,openalex,0,/tmp/pytest-of-root/pytest-275/test_run_topic_finder_writes_r0/report.md
+2026-08-30 08:36,sleep decision-making,crossref,0,/tmp/pytest-of-root/pytest-275/test_run_topic_finder_writes_r0/report.md
+2026-08-30 08:36,sleep decision-making,arxiv,0,/tmp/pytest-of-root/pytest-275/test_run_topic_finder_writes_r0/report.md
+2026-08-30 08:36,sleep memory,semanticscholar,5,/tmp/pytest-of-root/pytest-275/test_run_topic_finder_prints_o0/report.md
+2026-08-30 08:36,sleep memory,openalex,0,/tmp/pytest-of-root/pytest-275/test_run_topic_finder_prints_o0/report.md
+2026-08-30 08:36,sleep memory,crossref,0,/tmp/pytest-of-root/pytest-275/test_run_topic_finder_prints_o0/report.md
+2026-08-30 08:36,sleep memory,arxiv,0,/tmp/pytest-of-root/pytest-275/test_run_topic_finder_prints_o0/report.md
+2026-08-30 08:36,some working title,semanticscholar,0,/tmp/pytest-of-root/pytest-275/test_run_topic_finder_announce0/report.md
+2026-08-30 08:36,some working title,openalex,0,/tmp/pytest-of-root/pytest-275/test_run_topic_finder_announce0/report.md
+2026-08-30 08:36,some working title,crossref,0,/tmp/pytest-of-root/pytest-275/test_run_topic_finder_announce0/report.md
+2026-08-30 08:36,some working title,arxiv,0,/tmp/pytest-of-root/pytest-275/test_run_topic_finder_announce0/report.md
+2026-08-30 08:36,some working title,semanticscholar,0,/tmp/pytest-of-root/pytest-275/test_run_topic_finder_reports_0/report.md
+2026-08-30 08:36,some working title,openalex,0,/tmp/pytest-of-root/pytest-275/test_run_topic_finder_reports_0/report.md
+2026-08-30 08:36,some working title,crossref,0,/tmp/pytest-of-root/pytest-275/test_run_topic_finder_reports_0/report.md
+2026-08-30 08:36,some working title,arxiv,0,/tmp/pytest-of-root/pytest-275/test_run_topic_finder_reports_0/report.md
+2026-08-30 08:36,sleep decision-making,semanticscholar,1,/tmp/pytest-of-root/pytest-275/test_run_topic_finder_download0/report.md
+2026-08-30 08:36,sleep decision-making,openalex,0,/tmp/pytest-of-root/pytest-275/test_run_topic_finder_download0/report.md
+2026-08-30 08:36,sleep decision-making,crossref,0,/tmp/pytest-of-root/pytest-275/test_run_topic_finder_download0/report.md
+2026-08-30 08:36,sleep decision-making,arxiv,0,/tmp/pytest-of-root/pytest-275/test_run_topic_finder_download0/report.md
+2026-08-30 08:36,sleep decision-making,semanticscholar,1,/tmp/pytest-of-root/pytest-275/test_run_topic_finder_skips_do0/report.md
+2026-08-30 08:36,sleep decision-making,openalex,0,/tmp/pytest-of-root/pytest-275/test_run_topic_finder_skips_do0/report.md
+2026-08-30 08:36,sleep decision-making,crossref,0,/tmp/pytest-of-root/pytest-275/test_run_topic_finder_skips_do0/report.md
+2026-08-30 08:36,sleep decision-making,arxiv,0,/tmp/pytest-of-root/pytest-275/test_run_topic_finder_skips_do0/report.md
+2026-08-30 08:36,sleep decision-making,semanticscholar,1,/tmp/pytest-of-root/pytest-275/test_run_topic_finder_indexes_0/report.md
+2026-08-30 08:36,sleep decision-making,openalex,0,/tmp/pytest-of-root/pytest-275/test_run_topic_finder_indexes_0/report.md
+2026-08-30 08:36,sleep decision-making,crossref,0,/tmp/pytest-of-root/pytest-275/test_run_topic_finder_indexes_0/report.md
+2026-08-30 08:36,sleep decision-making,arxiv,0,/tmp/pytest-of-root/pytest-275/test_run_topic_finder_indexes_0/report.md
+2026-08-30 08:36,some paper,semanticscholar,1,/tmp/pytest-of-root/pytest-275/test_run_topic_finder_skips_li0/report.md
+2026-08-30 08:36,some paper,openalex,0,/tmp/pytest-of-root/pytest-275/test_run_topic_finder_skips_li0/report.md
+2026-08-30 08:36,some paper,crossref,0,/tmp/pytest-of-root/pytest-275/test_run_topic_finder_skips_li0/report.md
+2026-08-30 08:36,some paper,arxiv,0,/tmp/pytest-of-root/pytest-275/test_run_topic_finder_skips_li0/report.md
+2026-08-30 08:36,some title,semanticscholar,1,/tmp/pytest-of-root/pytest-275/test_run_topic_finder_summariz0/report.md
+2026-08-30 08:36,some title,openalex,0,/tmp/pytest-of-root/pytest-275/test_run_topic_finder_summariz0/report.md
+2026-08-30 08:36,some title,crossref,0,/tmp/pytest-of-root/pytest-275/test_run_topic_finder_summariz0/report.md
+2026-08-30 08:36,some title,arxiv,0,/tmp/pytest-of-root/pytest-275/test_run_topic_finder_summariz0/report.md
+2026-08-30 08:36,sleep deprivation adolescent decision-making impair adolescents,semanticscholar,1,/tmp/pytest-of-root/pytest-276/test_run_topic_finder_end_to_e0/report.md
+2026-08-30 08:36,sleep deprivation adolescent decision-making impair adolescents,openalex,0,/tmp/pytest-of-root/pytest-276/test_run_topic_finder_end_to_e0/report.md
+2026-08-30 08:36,sleep deprivation adolescent decision-making impair adolescents,crossref,0,/tmp/pytest-of-root/pytest-276/test_run_topic_finder_end_to_e0/report.md
+2026-08-30 08:36,sleep deprivation adolescent decision-making impair adolescents,arxiv,0,/tmp/pytest-of-root/pytest-276/test_run_topic_finder_end_to_e0/report.md
+2026-08-30 08:36,totally novel basket weaving technique rural patagonia,semanticscholar,0,/tmp/pytest-of-root/pytest-276/test_run_topic_finder_no_hits0/report.md
+2026-08-30 08:36,totally novel basket weaving technique rural patagonia,openalex,0,/tmp/pytest-of-root/pytest-276/test_run_topic_finder_no_hits0/report.md
+2026-08-30 08:36,totally novel basket weaving technique rural patagonia,crossref,0,/tmp/pytest-of-root/pytest-276/test_run_topic_finder_no_hits0/report.md
+2026-08-30 08:36,totally novel basket weaving technique rural patagonia,arxiv,0,/tmp/pytest-of-root/pytest-276/test_run_topic_finder_no_hits0/report.md
+2026-08-30 08:36,sleep decision-making,semanticscholar,1,/tmp/pytest-of-root/pytest-276/test_run_topic_finder_writes_r0/report.md
+2026-08-30 08:36,sleep decision-making,openalex,0,/tmp/pytest-of-root/pytest-276/test_run_topic_finder_writes_r0/report.md
+2026-08-30 08:36,sleep decision-making,crossref,0,/tmp/pytest-of-root/pytest-276/test_run_topic_finder_writes_r0/report.md
+2026-08-30 08:36,sleep decision-making,arxiv,0,/tmp/pytest-of-root/pytest-276/test_run_topic_finder_writes_r0/report.md
+2026-08-30 08:36,sleep memory,semanticscholar,5,/tmp/pytest-of-root/pytest-276/test_run_topic_finder_prints_o0/report.md
+2026-08-30 08:36,sleep memory,openalex,0,/tmp/pytest-of-root/pytest-276/test_run_topic_finder_prints_o0/report.md
+2026-08-30 08:36,sleep memory,crossref,0,/tmp/pytest-of-root/pytest-276/test_run_topic_finder_prints_o0/report.md
+2026-08-30 08:36,sleep memory,arxiv,0,/tmp/pytest-of-root/pytest-276/test_run_topic_finder_prints_o0/report.md
+2026-08-30 08:36,some working title,semanticscholar,0,/tmp/pytest-of-root/pytest-276/test_run_topic_finder_announce0/report.md
+2026-08-30 08:36,some working title,openalex,0,/tmp/pytest-of-root/pytest-276/test_run_topic_finder_announce0/report.md
+2026-08-30 08:36,some working title,crossref,0,/tmp/pytest-of-root/pytest-276/test_run_topic_finder_announce0/report.md
+2026-08-30 08:36,some working title,arxiv,0,/tmp/pytest-of-root/pytest-276/test_run_topic_finder_announce0/report.md
+2026-08-30 08:36,some working title,semanticscholar,0,/tmp/pytest-of-root/pytest-276/test_run_topic_finder_reports_0/report.md
+2026-08-30 08:36,some working title,openalex,0,/tmp/pytest-of-root/pytest-276/test_run_topic_finder_reports_0/report.md
+2026-08-30 08:36,some working title,crossref,0,/tmp/pytest-of-root/pytest-276/test_run_topic_finder_reports_0/report.md
+2026-08-30 08:36,some working title,arxiv,0,/tmp/pytest-of-root/pytest-276/test_run_topic_finder_reports_0/report.md
+2026-08-30 08:36,sleep decision-making,semanticscholar,1,/tmp/pytest-of-root/pytest-276/test_run_topic_finder_download0/report.md
+2026-08-30 08:36,sleep decision-making,openalex,0,/tmp/pytest-of-root/pytest-276/test_run_topic_finder_download0/report.md
+2026-08-30 08:36,sleep decision-making,crossref,0,/tmp/pytest-of-root/pytest-276/test_run_topic_finder_download0/report.md
+2026-08-30 08:36,sleep decision-making,arxiv,0,/tmp/pytest-of-root/pytest-276/test_run_topic_finder_download0/report.md
+2026-08-30 08:36,sleep decision-making,semanticscholar,1,/tmp/pytest-of-root/pytest-276/test_run_topic_finder_skips_do0/report.md
+2026-08-30 08:36,sleep decision-making,openalex,0,/tmp/pytest-of-root/pytest-276/test_run_topic_finder_skips_do0/report.md
+2026-08-30 08:36,sleep decision-making,crossref,0,/tmp/pytest-of-root/pytest-276/test_run_topic_finder_skips_do0/report.md
+2026-08-30 08:36,sleep decision-making,arxiv,0,/tmp/pytest-of-root/pytest-276/test_run_topic_finder_skips_do0/report.md
+2026-08-30 08:36,sleep decision-making,semanticscholar,1,/tmp/pytest-of-root/pytest-276/test_run_topic_finder_indexes_0/report.md
+2026-08-30 08:36,sleep decision-making,openalex,0,/tmp/pytest-of-root/pytest-276/test_run_topic_finder_indexes_0/report.md
+2026-08-30 08:36,sleep decision-making,crossref,0,/tmp/pytest-of-root/pytest-276/test_run_topic_finder_indexes_0/report.md
+2026-08-30 08:36,sleep decision-making,arxiv,0,/tmp/pytest-of-root/pytest-276/test_run_topic_finder_indexes_0/report.md
+2026-08-30 08:36,some paper,semanticscholar,1,/tmp/pytest-of-root/pytest-276/test_run_topic_finder_skips_li0/report.md
+2026-08-30 08:36,some paper,openalex,0,/tmp/pytest-of-root/pytest-276/test_run_topic_finder_skips_li0/report.md
+2026-08-30 08:36,some paper,crossref,0,/tmp/pytest-of-root/pytest-276/test_run_topic_finder_skips_li0/report.md
+2026-08-30 08:36,some paper,arxiv,0,/tmp/pytest-of-root/pytest-276/test_run_topic_finder_skips_li0/report.md
+2026-08-30 08:36,some title,semanticscholar,1,/tmp/pytest-of-root/pytest-276/test_run_topic_finder_summariz0/report.md
+2026-08-30 08:36,some title,openalex,0,/tmp/pytest-of-root/pytest-276/test_run_topic_finder_summariz0/report.md
+2026-08-30 08:36,some title,crossref,0,/tmp/pytest-of-root/pytest-276/test_run_topic_finder_summariz0/report.md
+2026-08-30 08:36,some title,arxiv,0,/tmp/pytest-of-root/pytest-276/test_run_topic_finder_summariz0/report.md

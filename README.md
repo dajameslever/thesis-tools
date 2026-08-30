@@ -651,8 +651,37 @@ reproduced because summarising it was harder.
 
 The default stays paraphrase-only, because that is the failure mode worth
 guarding against: quoting to avoid the work of compression. `--allow-quotes`
-is closer to exemplar practice, and is the right flag if you want it — the
-verbatim-only rules still apply, so a quotation is never invented.
+is closer to exemplar practice, and is the right flag if you want it — a
+quotation is still never invented.
+
+**Paraphrasing is enforced as restructuring, not word-swapping.** The taught
+guidance is blunt that "using synonyms to swap or substitute words from the
+original is not enough on its own to constitute a paraphrase", and that
+keeping the source's sentence pattern "will result in confused material that
+does not work as quotation, summary or paraphrase". Its worked example of a
+failed paraphrase leaves *"particularly during behavioural tasks calling for
+attention"* untouched and only swaps "speeding up" for "quickening" — which
+is patchwriting, and is precisely what a language model does by default when
+told to use its own words. So the prompt requires the **structure** to
+change, not just the vocabulary: a different order, a different length, a
+sentence built differently, worked from what the source establishes rather
+than from how it worded it. If a clause of four or more words could be found
+in the source unchanged, it gets rewritten. Two rules travel with that — a
+paraphrase carries its citation exactly as firmly as a quotation does (a
+reader must be able to see where someone else's idea starts and stops), and
+compression may not turn a hedge into a claim.
+
+**And when quoting is allowed, a quotation has to have a reason.** Not
+"exact wording matters" in the abstract, but one of the four the guidance
+names: an **authorial voice** the writer phrased particularly well, a
+**definition** in its author's own terms, an author's **position** stated
+unambiguously, or something worth **opening or closing** a passage on. "It
+saves me summarising it" is not one of them. The two accepted devices for
+fitting a quotation into your own sentence are permitted and described —
+an ellipsis for words removed, square brackets for a word added — since
+forbidding them (as the rules previously did, by demanding
+character-for-character reproduction) pushes the model toward dropping in
+whole sentences instead. Neither may change what the author meant.
 
 Two other things that exemplar confirms, both already how the tool behaves:
 its three sub-sections run 1,570 / 404 / 905 words, **scaled to the evidence

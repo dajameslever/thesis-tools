@@ -328,25 +328,57 @@ _SYNTHESIS_SYSTEM_PROMPT_TEMPLATE = (
 # what "show the reader we understand it without quoting it word for word"
 # looks like in practice. Paraphrasing throughout also removes the whole
 # class of fabricated-quotation risk.
+# Paraphrase is not word-substitution. The taught guidance is explicit that
+# "using synonyms to swap or substitute words from the original is not enough
+# on its own to constitute a paraphrase", and that "changing individual words
+# but keeping the same sentence structure or pattern will result in confused
+# material that does not work as quotation, summary or paraphrase". Its
+# worked example of a BAD paraphrase keeps "particularly during behavioural
+# tasks calling for attention" intact and only swaps "speeding up" for
+# "quickening" — which is patchwriting, and is exactly what a language model
+# does by default when told to "put this in your own words".
 _PARAPHRASE_ONLY_RULES = (
     "- PARAPHRASE THROUGHOUT — do not quote. Put every point in your own words. Reproducing a "
     "source's sentences shows only that they were copied; compressing them accurately is what "
     "shows they were understood. Reusing an unavoidable technical term is fine; reproducing a "
     "phrase or sentence is not.\n"
+    "- SWAPPING WORDS IS NOT PARAPHRASING. Keeping a source's sentence shape and substituting "
+    "synonyms into it is copying with extra steps: it reads as clumsy, it is not your voice, and "
+    "it is the single most common way a paraphrase fails. Change the STRUCTURE, not just the "
+    "vocabulary — say it in a different order, at a different length, and in a sentence built "
+    "differently from the original. Work from what the source establishes, not from how it worded "
+    "it. If a clause of four or more words could be found in the source unchanged, rewrite it.\n"
+    "- MAKE THE BOUNDARY VISIBLE. A reader must be able to tell where someone else's idea starts "
+    "and stops, and whose it is. Attribute every paraphrased claim to its source with the citation "
+    "marker given — a paraphrase needs its reference exactly as much as a quotation does — and do "
+    "not let one author's position drift into the next sentence unmarked.\n"
+    "- KEEP THE MEANING. Compressing must not strengthen, weaken or redirect what the source "
+    "actually said. A hedge in the original stays a hedge; a claim about one population stays "
+    "about that population.\n"
 )
 
 # Opt-in via --allow-quotes. The verbatim rule is what keeps a quotation
 # real: an invented one is worse than none at all.
 _QUOTING_ALLOWED_RULES = (
-    "- PREFER PARAPHRASE. Use a short direct quotation only where the exact wording carries "
-    "something a paraphrase cannot — a precise definition, or a finding stated distinctively. At "
-    "most one or two in the whole section; quoting every paper signals weak synthesis, not "
-    "thoroughness.\n"
-    "- QUOTE VERBATIM ONLY. Any text inside quotation marks must be copied character-for-character "
-    "from an 'Abstract' or 'Excerpt from the original document' block below — never invent, "
-    "paraphrase-then-quote, or reconstruct from memory. Zero quotations is the normal case, not a "
-    "failure. Extracted PDF text can carry artifacts (broken hyphenation, odd line breaks, OCR "
-    "noise); if a passage looks garbled, paraphrase it instead.\n"
+    "- PREFER PARAPHRASE, AND HAVE A REASON TO QUOTE. A quotation must earn its place by doing one "
+    "of four things, and you should be able to name which: carrying an AUTHORIAL VOICE the writer "
+    "phrased particularly well; giving a DEFINITION in its author's own terms; establishing an "
+    "author's POSITION with unambiguous clarity; or opening or closing a passage with something "
+    "worth landing on. 'It saves me summarising it' is not one of them. At most one or two in the "
+    "whole section; quoting every paper signals weak synthesis, not thoroughness, and a section "
+    "heavy with quotation is one where the writer's own argument has gone missing.\n"
+    "- QUOTE ACCURATELY. Any text inside quotation marks must come from an 'Abstract' or 'Excerpt "
+    "from the original document' block below — never invent, paraphrase-then-quote, or reconstruct "
+    "from memory. Zero quotations is the normal case, not a failure. Extracted PDF text can carry "
+    "artifacts (broken hyphenation, odd line breaks, OCR noise); if a passage looks garbled, "
+    "paraphrase it instead.\n"
+    "- FIT THE QUOTATION TO YOUR SENTENCE, using the two accepted devices and no others: an "
+    "ellipsis (…) marks words removed from the middle, and square brackets add a word needed to "
+    "make it read — \"the illusion that business can afford to be guided by ethics…is a "
+    "self-serving calculation in disguise\", or \"they [the public] only hear what they want to "
+    "hear\". Neither may change what the author meant. Everything between the marks is otherwise "
+    "the source's own wording, embedded in a sentence of yours — never a passage dropped in whole "
+    "and left to speak for itself.\n"
     "- When quoting a passage near a '[Page N]' marker, work that page number into the given "
     "citation marker the natural way for its form (e.g. ', p. N' before the closing parenthesis "
     "for an author-date or MLA-style marker, or 'p. N' alongside a numbered marker like [3]).\n"
