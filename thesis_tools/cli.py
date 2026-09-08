@@ -20,6 +20,15 @@ from .literature_review import OUTPUT_TYPES, LiteratureReviewInputs, run_literat
 from .outputs import archive_if_kept, write_view
 from .project import DEFAULT_PROJECT_PATH, ProjectState
 from .search_log import DEFAULT_SEARCH_LOG_PATH, terms_already_searched
+from .signs.detect import (
+    DEFAULT_MAX_GAP,
+    DEFAULT_MIN_CONFIDENCE,
+    SignDetectionInputs,
+    run_detection,
+)
+from .signs.prefilter import DEFAULT_MIN_SCORE
+from .signs.report import counts_by_type, write_reports
+from .signs.vision import SIGN_TYPES
 from .sources import ALL_SOURCES
 from .subquestions import generate_subquestions
 from .topic_finder import TopicFinderInputs, cache_path_for, load_cache_metadata, run_topic_finder
@@ -560,6 +569,26 @@ def _build_parser() -> argparse.ArgumentParser:
     lr.add_argument("--project-file", default=DEFAULT_PROJECT_PATH, help=f"Where shared project state lives (default: {DEFAULT_PROJECT_PATH})")
     lr.add_argument("--non-interactive", action="store_true", help="Don't prompt for missing values; fail instead if --field/--title (and sub-questions) can't be resolved")
 
+    ds = subparsers.add_parser(
+        "detect-signs",
+        help="Part 4: find speed limit signs, camera warning signs and camera housings in dashcam video saved out as photos",
+    )
+    ds.add_argument("--photos", dest="photos_dir", help="Folder of photos — one folder per video, or one flat folder of numbered frames")
+    ds.add_argument("-o", "--out", dest="out_dir", default="output/speed-signs", help="Where the report, CSVs and cache go (default: output/speed-signs)")
+    ds.add_argument("--every", type=int, default=1, help="Look at one frame in N within each video (default: 1 — every frame)")
+    ds.add_argument("--min-score", type=float, default=DEFAULT_MIN_SCORE, help=f"How sign-like a frame must look locally before it costs a Claude call (0-1, default: {DEFAULT_MIN_SCORE})")
+    ds.add_argument("--min-confidence", type=float, default=DEFAULT_MIN_CONFIDENCE, help=f"Drop identifications Claude is less sure of than this (default: {DEFAULT_MIN_CONFIDENCE})")
+    ds.add_argument("--max-gap", type=int, default=DEFAULT_MAX_GAP, help=f"Frames apart two hits can be and still count as the same sign (default: {DEFAULT_MAX_GAP})")
+    ds.add_argument("--types", help=f"Only look for these sign types, comma-separated. One or more of: {', '.join(SIGN_TYPES)}")
+    ds.add_argument("--max-calls", type=int, help="Stop sending frames to Claude after this many — a ceiling on the bill, not on the scan")
+    ds.add_argument("--image-width", type=int, default=1024, help="Longest edge of the frame as sent to Claude (default: 1024 — an image is billed by its area)")
+    ds.add_argument("--no-recursive", dest="no_recursive", action="store_true", help="Don't descend into sub-folders")
+    ds.add_argument("--llm-model", help=f"Claude model to identify frames with (default: {llm.DEFAULT_EXTRACTION_MODEL})")
+    ds.add_argument("--no-llm", dest="no_llm", action="store_true", help="Run the local pass only: flags candidate frames, identifies nothing, costs nothing")
+    ds.add_argument("--quiet", action="store_true", help="Only print the summary")
+    ds.add_argument("--project-file", default=DEFAULT_PROJECT_PATH, help=f"Where shared project state lives (default: {DEFAULT_PROJECT_PATH})")
+    ds.add_argument("--non-interactive", action="store_true", help="Don't prompt for --photos; fail instead if it isn't given")
+
     cfg = subparsers.add_parser(
         "configure",
         help="Set (and remember) your field, title, research question, sub-questions, and citation style once — before running anything else",
@@ -976,6 +1005,95 @@ def _run_literature_review_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_detect_signs_command(args: argparse.Namespace) -> int:
+    project = ProjectState.load(args.project_file)
+
+    photos_dir = args.photos_dir
+    if not photos_dir:
+        if args.non_interactive:
+            print("error: --non-interactive requires --photos", file=sys.stderr)
+            return 2
+        print("=== Find speed signs in dashcam frames ===")
+        print("Point this at the photos your videos were saved out as — either one folder")
+        print("per video, or one folder of numbered frames.\n")
+        photos_dir = _prompt("Folder of photos", required=True)
+
+    root = Path(photos_dir)
+    if not root.exists():
+        print(f"error: {root} doesn't exist", file=sys.stderr)
+        return 2
+
+    types = None
+    if args.types:
+        types = [t.strip() for t in args.types.split(",") if t.strip()]
+        unknown = [t for t in types if t not in SIGN_TYPES]
+        if unknown:
+            print(
+                f"error: unknown sign type(s): {', '.join(unknown)}. Choose from: {', '.join(SIGN_TYPES)}",
+                file=sys.stderr,
+            )
+            return 2
+
+    # Identification is a per-frame classification job on hundreds or
+    # thousands of images, which is exactly what the extraction tier exists
+    # for — an explicit --llm-model, or one saved in the project, still wins.
+    llm_model = args.llm_model or project.llm_model or llm.DEFAULT_EXTRACTION_MODEL
+
+    inputs = SignDetectionInputs(
+        photos_dir=str(root),
+        out_dir=args.out_dir,
+        recursive=not args.no_recursive,
+        every=max(1, args.every),
+        min_score=args.min_score,
+        min_confidence=args.min_confidence,
+        max_gap=args.max_gap,
+        use_llm=not args.no_llm,
+        llm_model=llm_model,
+        types=types,
+        max_calls=args.max_calls,
+        send_max_dim=args.image_width,
+        quiet=args.quiet,
+    )
+
+    run = run_detection(inputs)
+    if not run.results:
+        for problem in run.errors:
+            print(f"error: {problem}", file=sys.stderr)
+        return 1
+
+    written = write_reports(run, Path(args.out_dir), quiet=args.quiet)
+
+    confirmed = [s for s in run.sightings if not s.unconfirmed]
+    unconfirmed = [s for s in run.sightings if s.unconfirmed]
+    enforcement = [s for s in confirmed if s.is_enforcement]
+
+    print(f"\nScanned {run.frames_scanned:,} photo(s) in {run.seconds:.0f}s.")
+    print(f"  {run.candidates:,} looked sign-like locally ({run.candidates / max(1, run.frames_scanned):.0%} of the frames)")
+    if run.calls or run.cache_hits:
+        print(f"  {run.calls:,} sent to Claude, {run.cache_hits:,} answered from the cache")
+    print(f"  {len(confirmed):,} sign(s) identified, {len(enforcement):,} of them enforcement")
+    if unconfirmed:
+        print(f"  {len(unconfirmed):,} candidate(s) flagged but never identified")
+    if run.llm_note:
+        print(f"  note: {run.llm_note}")
+
+    for name, count in counts_by_type(confirmed).items():
+        print(f"    {count:>4}  {name.replace('_', ' ')}")
+
+    spend = llm.format_usage(run.usage)
+    if spend:
+        print(f"  spend: {spend}")
+
+    print("\nWritten:")
+    for label, path in written.items():
+        print(f"  {label:>9}: {path}")
+    if run.errors:
+        print(f"\n{len(run.errors)} frame(s) had problems — the first few:", file=sys.stderr)
+        for problem in run.errors[:5]:
+            print(f"  {problem}", file=sys.stderr)
+    return 0
+
+
 def _run_configure_command(args: argparse.Namespace) -> int:
     project = ProjectState.load(args.project_file)
 
@@ -1052,6 +1170,8 @@ def main(argv=None) -> int:
         return _run_visualize_library_command(args)
     if args.command == "literature-review":
         return _run_literature_review_command(args)
+    if args.command == "detect-signs":
+        return _run_detect_signs_command(args)
     if args.command == "configure":
         return _run_configure_command(args)
 

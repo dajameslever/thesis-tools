@@ -236,3 +236,64 @@ def ask(
         if errors is not None:
             errors.append(reason)
         return None
+
+
+def ask_image(
+    client,
+    system: str,
+    user: str,
+    image_data: str,
+    media_type: str = "image/jpeg",
+    model: str = DEFAULT_EXTRACTION_MODEL,
+    max_tokens: int = 500,
+    errors: Optional[List[str]] = None,
+    usage_totals: Optional[Dict[str, int]] = None,
+) -> Optional[str]:
+    """Single-turn request about one image. Returns the text response, or
+    None on any failure.
+
+    `image_data` is base64 already, because the caller is the one that knows
+    how big the image should be sent: an image is billed by its pixel area,
+    so the decision to shrink a 4K dashcam frame before sending it is worth
+    far more than anything this function could do, and belongs where the
+    resizing happens.
+
+    Deliberately a sibling of ask() rather than an argument to it. The two
+    share nothing but the client: no prompt caching (a cache breakpoint on a
+    prompt whose bulk is a different image every time is pure overhead), no
+    streaming (these answers are a few dozen tokens), and no sentence
+    trimming (the answer is JSON, and half of one is not better than none).
+    """
+    try:
+        message = client.messages.create(
+            model=model,
+            max_tokens=max_tokens,
+            system=system,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image",
+                            "source": {"type": "base64", "media_type": media_type, "data": image_data},
+                        },
+                        {"type": "text", "text": user},
+                    ],
+                }
+            ],
+        )
+        if usage_totals is not None:
+            for key, value in _usage_of(message).items():
+                usage_totals[key] = usage_totals.get(key, 0) + value
+        text = "".join(block.text for block in message.content if getattr(block, "type", None) == "text").strip()
+        if not text:
+            if errors is not None:
+                errors.append("the model returned an empty response")
+            return None
+        return text
+    except Exception as exc:
+        reason = f"{type(exc).__name__}: {exc}"
+        print(f"  [llm] image request failed ({reason})", file=sys.stderr)
+        if errors is not None:
+            errors.append(reason)
+        return None

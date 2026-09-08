@@ -15,11 +15,15 @@ Go through the steps to be the most efficient.
 - **Part 2a - Visualisation:** this visualises Part 2 and helps you find more sources, it also builds your index as an excel source. 
 - **Part 3 — Literature Review Drafter:** turn what Parts 1 and 2 found into
   a structured literature review draft, organized around your sub-questions.
+- **Part 4 — Speed Sign Detector:** find speed limit signs, camera warning
+  signs and camera housings in dashcam video saved out as photos, and report
+  one row per sign rather than one per frame. A standalone fieldwork tool —
+  it shares the project file's Claude settings and nothing else.
 
 Spend a lot of time with part 2 and 2a - find more sources, ingest, review. 
 Decide if your question is good enough etc. Go back to part 1 if you need to change it. 
 
-All three share a **project file** (`thesis_tools_project.json`, created next
+Parts 1-3 share a **project file** (`thesis_tools_project.json`, created next
 to wherever you run the tool) holding your field, working title, research
 question, sub-questions, citation style, and Claude preference. **Answer
 these once, in whichever part you run first — every later command reuses
@@ -1078,6 +1082,117 @@ filing an old copy away ever fails (a read-only folder, say), the run says
 so and still writes the new output: losing this run's work because last
 run's couldn't be archived would be the worse outcome.
 
+## Part 4: Speed Sign Detector
+
+Find speed limit signs, speed camera warning signs and the camera housings
+themselves in dashcam footage that has been saved out as photos — one folder
+per video, or one flat folder of numbered frames.
+
+```bash
+thesis-tools detect-signs --photos ./photos --out output/speed-signs
+```
+
+It walks the folder, works out which photos came from which video and in what
+order, and reports **one row per physical sign** rather than one per frame.
+That distinction is the whole point: approaching a 40 roundel at 30mph puts it
+in fifty consecutive frames, and a table with fifty rows in it has not found
+fifty signs — it has found one, fifty times, and any count taken from it is
+wrong by whatever the frame rate happened to be.
+
+### How it decides
+
+Two passes, because the second one costs money and the first one doesn't.
+
+1. **The local pass** scores every photo on the colours and contrasts a speed
+   sign actually has: a concentrated patch of signal red (a limit roundel, a
+   warning sign's border), a concentrated patch of housing yellow (a Gatso or
+   Truvelo box, an enforcement van), or a bright colourless plate carrying
+   dark legend (an average-speed-check sign, washed out by distance or
+   weather). Concentration is the signal, not quantity — two per cent of a
+   frame being red means a sign if it is one patch and means brake lights if
+   it is scattered — so the score is read over small overlapping windows
+   rather than over the frame. The bottom sixth of the frame is ignored: on a
+   dashcam that is the car's own bonnet, and a permanent reflection there
+   would flag every frame of a drive. This is arithmetic on pixels — no
+   model, no network, no cost.
+2. **Claude** is then shown only the frames that survived, and names what is
+   in them from a closed list of ten sign types. The list is closed on
+   purpose: a thesis that reports "312 speed-related signs" has to be able to
+   say what was counted, and a column of model-invented labels ("speed camera
+   sign", "speed cam", "camera warning") cannot be tabulated and silently
+   splits one category into three. Anything that fits none of them comes back
+   as `other_speed_sign`, so the residue is visible rather than absorbed.
+
+On typical footage the local pass throws away the large majority of frames
+before anything is sent, which is the difference between pennies and pounds
+for a drive of any length. Every answer is also cached against the photo's own
+bytes, so re-running to tune a threshold — or after re-exporting the frames
+into a differently-named folder — costs nothing the second time.
+
+### What it looks for
+
+| Type | What it is |
+| --- | --- |
+| `speed_limit` | A numeric limit roundel — the number is read where it is legible |
+| `national_speed_limit` | White circle, black diagonal bar |
+| `variable_speed_limit` | An electronic/matrix limit, usually on a gantry |
+| `advisory_speed` | Roadworks limits, bend advisories, "SLOW" |
+| `road_marking_speed` | A limit painted on the carriageway itself |
+| `speed_camera_warning` | A sign warning that cameras are in use |
+| `average_speed_check` | An average-speed / SPECS zone sign |
+| `speed_indicator_device` | A "your speed" feedback sign |
+| `camera_housing` | The unit itself: a Gatso or Truvelo box, an average-speed camera, a mobile enforcement van |
+| `other_speed_sign` | Anything else clearly about speed that none of the above fits |
+
+The last four plus `speed_camera_warning` are counted as **enforcement** and
+reported separately from regulation, because "how many cameras are on this
+route" and "how often does the limit change" are different questions and one
+number answers neither. Narrow the search with
+`--types speed_camera_warning,camera_housing` when only one of them is the
+question.
+
+### What it writes
+
+Into `--out` (default `output/speed-signs/`):
+
+- **`report.html`** — the one to open. Every sighting as a card with the frame
+  it was seen best in, embedded in the page rather than linked, so it survives
+  being emailed to a supervisor.
+- **`sightings.csv`** — one row per sign: type, limit, confidence, which video,
+  which frames it was visible across, and the file it was read from. This is
+  the one that becomes a table in a chapter.
+- **`frames.csv`** — the audit trail: every photo scanned, its local score,
+  each cue's contribution, whether it was sent, and what came back. This is
+  what makes an argument about the threshold settleable with evidence rather
+  than by feel.
+- **`detections.json`** — the whole run, for anything downstream.
+- **`verdict-cache.json`** — what has already been paid for.
+
+### Tuning it
+
+| Flag | What it does |
+| --- | --- |
+| `--every N` | Look at one frame in N within each video. At 30fps a sign is legible across a dozen frames, so `--every 5` cuts the work by 80% and still gives every sign several chances to be seen |
+| `--min-score` | How sign-like a frame must look locally before it costs a call. The default errs towards keeping frames: a frame wrongly kept costs one cheap call, a frame wrongly dropped is a camera that never appears at all. Raise it if `frames.csv` shows the calls going on empty road |
+| `--min-confidence` | Drop identifications Claude is less sure of than this. They stay in `frames.csv` either way — a sighting is a claim, the hedging belongs in the audit trail |
+| `--max-gap` | How many frames apart two hits can be and still be the same sign (default 45 — about a second and a half at 30fps, enough to ride out a lamp post passing in front of it) |
+| `--max-calls` | A ceiling on the bill, not on the scan: everything is still scored and reported, frames past the ceiling are marked unconfirmed |
+| `--image-width` | Longest edge of the frame as sent (default 1024). An image is billed by its area, so this is the biggest single lever on cost |
+| `--no-llm` | The local pass only. Identifies nothing, costs nothing, and reports what to go and look at — useful for a first sweep of a large export |
+
+Without an `ANTHROPIC_API_KEY` the run does the `--no-llm` thing and says so
+in the report, rather than reporting an empty road.
+
+### What it is not
+
+It reads photographs, and it is only ever as good as they are: a sign that is
+too distant, too motion-blurred, too dark or behind a lorry is not in the
+frame in any useful sense, and nothing here recovers it. Sampling with
+`--every` trades recall for cost knowingly. Treat the output as a first pass
+over footage that a person then checks — `report.html` puts the picture beside
+every claim precisely so that checking it is quick — and not as a survey that
+has already been verified.
+
 ## Project layout
 
 ```
@@ -1117,7 +1232,13 @@ thesis_tools/
     library_indexer.py   Orchestrates Part 2
     visualize.py          Computes + renders the `visualize-library` HTML page
     literature_matrix.py  Builds the companion Excel synthesis-matrix workbook
-  cli.py              `topic-finder` / `index-library` / `visualize-library` / `literature-review` / `configure` commands
+  signs/
+    frames.py            Turns a folder of photos back into ordered per-video sequences
+    prefilter.py         The free local pass: which frames are even worth looking at
+    vision.py            Claude identifying one frame, the closed sign vocabulary, and the verdict cache
+    detect.py            Runs both passes and collapses consecutive frames into one sighting per sign
+    report.py            Writes sightings.csv / frames.csv / detections.json / report.html
+  cli.py              `topic-finder` / `index-library` / `visualize-library` / `literature-review` / `detect-signs` / `configure` commands
 tests/                Unit tests (network calls are mocked; PDF/docx tests use real files)
 ```
 
@@ -1130,7 +1251,7 @@ python -m pytest
 
 ## Roadmap
 
-Parts 1, 2, and 3 are done. Contributions/ideas welcome — this is meant to
+Parts 1, 2, 3 and 4 are done. Contributions/ideas welcome — this is meant to
 keep growing (e.g. exporting the draft review straight into a Word doc, or
 turning the sub-questions into a full thesis outline).
 

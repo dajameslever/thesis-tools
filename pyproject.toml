@@ -12,6 +12,9 @@ dependencies = [
     "requests>=2.28",
     "pypdf>=4.0",
     "python-docx>=1.0",
+    # Reading the dashcam frames `detect-signs` works on: the local prefilter
+    # and the thumbnails in its report both go through Pillow.
+    "pillow>=9.0",
     # Claude-drafted summaries, sub-question suggestions, stance analysis, and
     # literature-review prose are on by default whenever ANTHROPIC_API_KEY is
     # present — install it unconditionally rather than as an opt-in extra.
@@ -29,4 +32,4 @@ dev = ["pytest>=7.0"]
 thesis-tools = "thesis_tools.cli:main"
 
 [tool.setuptools]
-packages = ["thesis_tools", "thesis_tools.sources", "thesis_tools.library"]
+packages = ["thesis_tools", "thesis_tools.sources", "thesis_tools.library", "thesis_tools.signs"]
